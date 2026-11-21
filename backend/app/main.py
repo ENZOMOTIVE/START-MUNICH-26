@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from app.api.demo import router as demo_router
 from app.api.health import router as health_router
 from app.api.sessions import router as sessions_router
+from app.core import netguard
 from app.core.config import get_settings
 from app.core.errors import DomainError, NotFoundError
 from app.core.logging import configure_logging
@@ -31,6 +32,12 @@ def create_app() -> FastAPI:
     application.include_router(health_router)
     application.include_router(sessions_router)
     application.include_router(demo_router)
+    if settings.app_mode == "sandbox":
+        # Sandbox controls do not exist in any other mode, and this process cannot reach out.
+        from app.api.sandbox import router as sandbox_router
+
+        netguard.install(settings.database_url, settings.sandbox_simulator())
+        application.include_router(sandbox_router)
 
     @application.exception_handler(NotFoundError)
     async def not_found_handler(_request: Request, exc: NotFoundError):

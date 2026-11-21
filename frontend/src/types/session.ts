@@ -12,9 +12,10 @@ export type SessionStage =
   | "exception";
 
 export type Meta = {
-  app_mode: "demo" | "live";
+  app_mode: "demo" | "live" | "sandbox";
   live_actions_enabled: boolean;
   demo?: boolean;
+  sandbox?: boolean;
 };
 
 export type RfqPayload = {

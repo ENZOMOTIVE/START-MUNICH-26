@@ -178,7 +178,8 @@ def candidates_from_fixtures(
             continue
         mw = fx.match.get("weight_kg")
         w = _get(rfq, "weight_kg")
-        if mw is not None and w is not None and D(str(mw)) != D(str(w)):
+        mismatch = mw is not None and w is not None and D(str(mw)) != D(str(w))
+        if mismatch:
             log.warning(
                 "rate fixture %s is hand-checked for %s kg, RFQ asks %s kg (demo only)",
                 fx.path.name,
@@ -195,6 +196,10 @@ def candidates_from_fixtures(
                 pickup_zone=pickup_zone,
                 now=now,
             )
+            if mismatch:
+                # A hand-checked price is true for its own weight only; never offer it for another.
+                cand = cand.model_copy(update={"complete": False})
+                problems = [*problems, "fixture_weight_mismatch"]
             if problems:
                 log.info("fixture candidate %s incomplete: %s", cand.carrier, problems)
             out.append(cand)

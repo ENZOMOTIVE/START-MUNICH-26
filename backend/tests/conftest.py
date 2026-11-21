@@ -11,6 +11,16 @@ from app.db.session import get_db, get_engine, get_session_factory
 from app.main import app
 from fastapi.testclient import TestClient
 from sqlalchemy import inspect
+from sqlalchemy.engine import make_url
+
+# Tests commit rows. They may only ever run against a database made for that.
+_TEST_DB = make_url(os.environ.get("DATABASE_URL", "postgresql://x/unset")).database or ""
+if not any(word in _TEST_DB for word in ("sandbox", "test")):
+    pytest.exit(
+        f"refusing to run tests against database '{_TEST_DB}': it is not a sandbox or test "
+        "database. Use `make test` (sandbox database on 127.0.0.1:5434).",
+        returncode=2,
+    )
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 

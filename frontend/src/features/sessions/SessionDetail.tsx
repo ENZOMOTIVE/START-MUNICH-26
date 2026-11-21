@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getEvents, getSession, pauseSession, resumeSession } from "../../api/client";
+import { getSession, pauseSession, resumeSession } from "../../api/client";
+import { ActionsPanel } from "./ActionsPanel";
 import type { SessionDetail as SessionDetailModel, SessionEvent } from "../../types/session";
 
 function formatWhen(value: string): string {
@@ -34,15 +35,18 @@ export function SessionDetail() {
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Kept apart from load errors: the 2 s refresh must not wipe "your pause was refused".
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!id) {
       return;
     }
     try {
-      const [detail, timeline] = await Promise.all([getSession(id), getEvents(id)]);
+      // One request: the session detail already carries its timeline.
+      const detail = await getSession(id);
       setSession(detail);
-      setEvents(detail.events && detail.events.length > 0 ? detail.events : timeline);
+      setEvents(detail.events ?? []);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "failed to load session");
@@ -50,11 +54,22 @@ export function SessionDetail() {
   }, [id]);
 
   useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => {
-      void refresh();
-    }, 2000);
-    return () => window.clearInterval(timer);
+    // The next refresh starts only after the last one finished, and not while the tab is hidden.
+    let stopped = false;
+    let timer = 0;
+    const tick = async () => {
+      if (!document.hidden) {
+        await refresh();
+      }
+      if (!stopped) {
+        timer = window.setTimeout(tick, 2000);
+      }
+    };
+    void tick();
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
   }, [refresh]);
 
   const onPause = async () => {
@@ -62,11 +77,12 @@ export function SessionDetail() {
       return;
     }
     setBusy(true);
+    setActionError(null);
     try {
       await pauseSession(id);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "pause failed");
+      setActionError(err instanceof Error ? err.message : "pause failed");
     } finally {
       setBusy(false);
     }
@@ -77,11 +93,12 @@ export function SessionDetail() {
       return;
     }
     setBusy(true);
+    setActionError(null);
     try {
       await resumeSession(id);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "resume failed");
+      setActionError(err instanceof Error ? err.message : "resume failed");
     } finally {
       setBusy(false);
     }
@@ -132,6 +149,11 @@ export function SessionDetail() {
       {error ? (
         <p className="status error" role="alert">
           {error}
+        </p>
+      ) : null}
+      {actionError ? (
+        <p className="status error" role="alert">
+          Not done: {actionError}
         </p>
       ) : null}
 
@@ -198,6 +220,12 @@ export function SessionDetail() {
               <dd>{booking?.reference ?? booking?.booking_reference ?? "—"}</dd>
             </dl>
           </article>
+
+          {id && (
+            <article className="panel">
+              <ActionsPanel sessionId={id} paused={session.paused === true} />
+            </article>
+          )}
 
           <article className="panel timeline">
             <h2>Timeline</h2>

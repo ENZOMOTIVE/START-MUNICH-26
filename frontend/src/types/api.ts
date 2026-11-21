@@ -106,6 +106,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Session Events
+         * @description Server-sent events for one session's timeline.
+         *
+         *     The event id is the event's position in the timeline, so a client that reconnects with
+         *     Last-Event-ID (or `after`) gets exactly the events it has not seen, once.
+         */
+        get: operations["stream_session_events_api_sessions__session_id__stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/pause": {
         parameters: {
             query?: never;
@@ -134,6 +157,146 @@ export interface paths {
         put?: never;
         /** Resume */
         post: operations["resume_api_sessions__session_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Actions
+         * @description Every outbound action of the session with its real delivery state.
+         */
+        get: operations["list_actions_api_sessions__session_id__actions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/actions/{action_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Edit Draft */
+        put: operations["edit_draft_api_sessions__session_id__actions__action_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/actions/{action_id}/send": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send Action
+         * @description A person approves and sends a draft, through the same outbox as the agents.
+         */
+        post: operations["send_action_api_sessions__session_id__actions__action_id__send_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/actions/{action_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Unknown
+         * @description An UNKNOWN send has no automatic answer. A person who checked says which it was.
+         */
+        post: operations["resolve_unknown_api_sessions__session_id__actions__action_id__resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/review/mail/{external_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Mail
+         * @description A person has dealt with this mail: clear its flag. `approve` uses a carrier's bid that
+         *     waited for review; clearing a tariff hold reprices that carrier's open offers.
+         */
+        post: operations["resolve_mail_api_review_mail__external_id__resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Usage
+         * @description Model gateway calls by model and cost kind. A cost is shown only where one was
+         *     observed or estimated; `unknown` means the call was counted and its cost is not known.
+         */
+        get: operations["usage_api_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Review
+         * @description Everything that waits for a person: blocked sessions, mail that matched no shipment,
+         *     and tariff files that differ from the approved ones.
+         */
+        get: operations["review_api_review_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -214,10 +377,25 @@ export interface components {
              */
             unit: string;
         };
+        /** DraftEdit */
+        DraftEdit: {
+            /** Subject */
+            subject?: string | null;
+            /** Body */
+            body: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** MailResolution */
+        MailResolution: {
+            /**
+             * Approve
+             * @default false
+             */
+            approve: boolean;
         };
         /** QuoteDecision */
         QuoteDecision: {
@@ -350,6 +528,11 @@ export interface components {
              * @default true
              */
             simulated: boolean;
+        };
+        /** Resolution */
+        Resolution: {
+            /** Sent */
+            sent: boolean;
         };
         /**
          * ServiceIntent
@@ -641,10 +824,48 @@ export interface operations {
             };
         };
     };
+    stream_session_events_api_sessions__session_id__stream_get: {
+        parameters: {
+            query?: {
+                follow?: boolean;
+                after?: number;
+            };
+            header?: {
+                "last-event-id"?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     pause_api_sessions__session_id__pause_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-operator-token"?: string | null;
+            };
             path: {
                 session_id: string;
             };
@@ -675,7 +896,9 @@ export interface operations {
     resume_api_sessions__session_id__resume_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-operator-token"?: string | null;
+            };
             path: {
                 session_id: string;
             };
@@ -699,6 +922,224 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_actions_api_sessions__session_id__actions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_draft_api_sessions__session_id__actions__action_id__put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-operator-token"?: string | null;
+            };
+            path: {
+                session_id: string;
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DraftEdit"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_action_api_sessions__session_id__actions__action_id__send_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-operator-token"?: string | null;
+            };
+            path: {
+                session_id: string;
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_unknown_api_sessions__session_id__actions__action_id__resolve_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-operator-token"?: string | null;
+            };
+            path: {
+                session_id: string;
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Resolution"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_mail_api_review_mail__external_id__resolve_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-operator-token"?: string | null;
+            };
+            path: {
+                external_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["MailResolution"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    usage_api_usage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    review_api_review_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

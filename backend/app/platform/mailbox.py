@@ -6,16 +6,19 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.errors import LiveActionsDisabled
 from app.db import repositories
 from app.db.models import MessageRow
+from app.platform.readonly import ObservationOnly, ReadOnlyTransport  # noqa: I001
 
 log = logging.getLogger(__name__)
 
 CURSOR_NAME = "mailbox"
+POLLER_LOCK = 5_150_001  # arbitrary application-wide advisory lock id
 POLL_LIMIT = 100
 HTTP_TIMEOUT_SECONDS = 5.0
 DEFAULT_RATE_LIMIT_WAIT_SECONDS = 10.0
@@ -43,13 +46,16 @@ class LiveMailbox:
 
     def _http(self) -> httpx.Client:
         settings = get_settings()
-        if not settings.live_allowed():
+        observing = settings.app_mode == "observe"
+        if not (settings.live_allowed() or observing):
             raise LiveActionsDisabled()
         if self._client is None:
             self._client = httpx.Client(
                 base_url=settings.hackathon_api_base,
                 headers={"X-API-Key": settings.hackathon_api_key},
                 timeout=HTTP_TIMEOUT_SECONDS,
+                # Observation mode can read the mailbox; the transport itself refuses writes.
+                transport=ReadOnlyTransport(httpx.HTTPTransport()) if observing else None,
             )
         return self._client
 
@@ -73,17 +79,54 @@ class LiveMailbox:
     def poll(self, since_id: int, limit: int = POLL_LIMIT) -> dict[str, Any] | list[Any]:
         return self._get("/v1/mailbox/messages", since_id=since_id, limit=limit).json()
 
+    def round_answered(self, received_at: datetime) -> bool:
+        """True when the board already shows an answer of this team to the request that
+        arrived at `received_at` (GET /v1/board/me; a round's `sent_at` is that time)."""
+        try:
+            rounds = self._get("/v1/board/me").json().get("requests") or []
+        except (MailboxError, ValueError) as exc:
+            log.warning("board check failed, relying on local records: %s", exc)
+            return False
+        when = received_at if received_at.tzinfo else received_at.replace(tzinfo=UTC)
+        return any(
+            item.get("answered_at") and _timestamp(item.get("sent_at")) == when for item in rounds
+        )
+
     def download_attachment(self, message_id: int | str, attachment_id: int | str) -> bytes:
         path = f"/v1/mailbox/messages/{int(message_id)}/attachments/{int(attachment_id)}"
         return self._get(path).content
 
     def send(self, payload: dict[str, Any]) -> dict[str, Any]:
-        if not get_settings().live_allowed():
-            raise LiveActionsDisabled()
-        raise NotImplementedError(
-            "TODO: implement POST https://api.start-hack.5u.ai/v1/mailbox/messages "
-            "after re-reading official OpenAPI. Do not invent endpoints."
-        )
+        """POST /v1/mailbox/messages with the documented HackathonMessageIn fields only.
+
+        MailboxError.kind tells the outbox what is known: `not_sent` and `rejected` are
+        definite, `unknown` means the mail may have gone out.
+        """
+        if get_settings().app_mode == "observe":
+            raise ObservationOnly("mail send")  # refused here, before any request is built
+        body = {
+            key: payload[key]
+            for key in ("to", "subject", "body", "in_reply_to", "attachments")
+            if payload.get(key) is not None
+        }
+        client = self._http()
+        try:
+            response = client.post("/v1/mailbox/messages", json=body)
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            raise MailboxError("not_sent", str(exc)) from exc
+        except httpx.TransportError as exc:
+            raise MailboxError("unknown", f"{type(exc).__name__}: {exc}") from exc
+        if response.status_code == 429:
+            wait = response.headers.get("Retry-After", "")
+            raise MailboxError("not_sent", "HTTP 429", float(wait) if wait.isdigit() else None)
+        if response.status_code >= 500:
+            raise MailboxError("unknown", f"HTTP {response.status_code}")
+        if response.status_code >= 400:
+            raise MailboxError("rejected", f"HTTP {response.status_code}: {response.text[:200]}")
+        try:
+            return response.json()
+        except ValueError:
+            return {}
 
 
 def ingest_message(db: Session, payload: dict[str, Any]) -> tuple[MessageRow, bool]:
@@ -176,13 +219,19 @@ def poll_page(response: dict[str, Any] | list[Any]) -> tuple[list[dict[str, Any]
 
 
 def poll_mailbox_once(db: Session, mailbox, limit: int = POLL_LIMIT) -> int:
-    since_id = repositories.get_cursor(db, CURSOR_NAME)
+    # One poller per team: a second worker that polls at the same time skips this round. The
+    # lock lives as long as this transaction, which also stores the mail and moves the cursor.
+    if not db.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": POLLER_LOCK}):
+        return 0
+    # Observation keeps its own cursor, so it never moves the one a live run reads from.
+    cursor = CURSOR_NAME + (":observe" if get_settings().app_mode == "observe" else "")
+    since_id = repositories.get_cursor(db, cursor)
     items, next_since_id = poll_page(mailbox.poll(since_id, limit))
     for item in items:
         ingest_message(db, map_poll_item(item))
     if next_since_id is None:
         next_since_id = max((int(i["id"]) for i in items), default=since_id)
-    repositories.advance_cursor(db, CURSOR_NAME, next_since_id)
+    repositories.advance_cursor(db, cursor, next_since_id)
     return len(items)
 
 

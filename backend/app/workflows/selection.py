@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 from app.contracts.models import ServiceIntent
+from app.core import clock
 from app.core.errors import DomainError
 from app.pricing.calculator import select_offer
 
@@ -27,7 +28,7 @@ def _is_current(candidate, now: datetime) -> bool:
 def choose_offer(candidates, service_intent, *, now: datetime | None = None):
     candidates = list(candidates)
     intent = _intent_value(service_intent)
-    now = _aware(now or datetime.now(UTC))
+    now = _aware(now or clock.now())
     complete = [candidate for candidate in candidates if candidate.complete]
     current = [candidate for candidate in complete if _is_current(candidate, now)]
     if complete and not current:
@@ -38,12 +39,17 @@ def choose_offer(candidates, service_intent, *, now: datetime | None = None):
 def choose_offer_with_evidence(candidates, service_intent, *, now: datetime | None = None):
     candidates = list(candidates)
     intent = _intent_value(service_intent)
-    now = _aware(now or datetime.now(UTC))
+    now = _aware(now or clock.now())
     complete = [candidate for candidate in candidates if candidate.complete]
     current = [candidate for candidate in complete if _is_current(candidate, now)]
     if complete and not current:
         raise DomainError("offers_expired")
 
+    # Quote what can be booked: an offer without a portal rate_id is only used when nothing
+    # bookable exists (booking it then needs a person; email booking is not built).
+    bookable = [candidate for candidate in current if candidate.rate_id]
+    unbookable = {str(c.id) for c in current if not c.rate_id} if bookable else set()
+    current = bookable or current
     selected = select_offer(current, intent)
     missing_transit = (
         [candidate for candidate in current if candidate.transit_days is None]
@@ -97,11 +103,14 @@ def choose_offer_with_evidence(candidates, service_intent, *, now: datetime | No
                     and candidate.transit_days is None
                     else "selected"
                     if candidate.id == selected.id
+                    else "excluded_unbookable"
+                    if str(candidate.id) in unbookable
                     else "considered"
                 ),
             }
             for candidate in candidates
         ],
+        "excluded_unbookable_candidate_ids": sorted(unbookable),
         "selected_candidate_id": str(selected.id),
         "selected_rate_id": selected.rate_id,
         "selected_total": str(selected.total),

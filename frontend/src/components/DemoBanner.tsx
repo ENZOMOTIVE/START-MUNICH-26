@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { getMeta } from "../api/client";
 
 export function DemoBanner() {
-  const [demo, setDemo] = useState(false);
+  const [mode, setMode] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -11,27 +11,32 @@ export function DemoBanner() {
       try {
         const meta = await getMeta();
         if (!cancelled) {
-          setDemo(meta.app_mode === "demo");
+          setMode(meta.app_mode);
         }
       } catch {
         if (!cancelled) {
-          setDemo(false);
+          setMode("");
         }
       }
     };
 
-    void load();
-    const timer = window.setInterval(() => {
-      void load();
-    }, 2000);
+    void load(); // the mode cannot change while the page is open: ask once
 
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
     };
   }, []);
 
-  if (!demo) {
+  if (mode === "sandbox") {
+    return (
+      <div className="demo-ribbon sandbox-ribbon" role="status">
+        <span>Sandbox · simulated data · no live actions</span>
+        <a href="/sandbox">Sandbox console</a>
+        <a href="/">Sessions board</a>
+      </div>
+    );
+  }
+  if (mode !== "demo") {
     return null;
   }
 

@@ -1,10 +1,11 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from app.core import clock
 from app.db.models import (
     ActionIntentRow,
     BookingRow,
@@ -17,6 +18,8 @@ from app.db.models import (
     SessionEventRow,
     SessionRow,
 )
+
+JOB_LEASE = timedelta(seconds=60)
 
 
 def get_or_create_message(db: Session, values: dict) -> tuple[MessageRow, bool]:
@@ -41,9 +44,17 @@ def enqueue_job(db: Session, kind: str, payload: dict) -> JobRow:
 
 
 def claim_job(db: Session, worker_id: str) -> JobRow | None:
+    now = datetime.now(UTC)
     stmt = (
         select(JobRow)
-        .where(JobRow.status == "pending", JobRow.run_after <= datetime.now(UTC))
+        .where(
+            or_(
+                JobRow.status == "pending",
+                # A worker that died mid-job leaves it `claimed`; take it back after the lease.
+                and_(JobRow.status == "claimed", JobRow.claimed_at < now - JOB_LEASE),
+            ),
+            JobRow.run_after <= now,
+        )
         .order_by(JobRow.created_at)
         .with_for_update(skip_locked=True)
         .limit(1)
@@ -117,7 +128,7 @@ def append_event(
         session_id=session_id,
         type=event_type,
         payload=payload,
-        occurred_at=occurred_at or datetime.now(UTC),
+        occurred_at=occurred_at or clock.now(),  # simulated time in the sandbox, wall time else
         simulated=simulated,
     )
     db.add(event)

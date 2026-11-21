@@ -54,6 +54,7 @@ def test_demo_replay_keeps_one_quote_and_one_booking(client, db):
     rfq = db.get(RfqRow, db.get(SessionRow, uuid.UUID(first)).rfq_id)
     assert (rfq.thread_id, rfq.status) == ("demo-thread", "booked")
     kinds = db.scalars(select(ActionIntentRow.kind).where(ActionIntentRow.rfq_id == rfq.id)).all()
-    assert sorted(kinds) == ["booking", "first_quote"]
+    # `reply` is the booking-confirmed mail; there is still one quote and one booking action.
+    assert sorted(kinds) == ["booking", "first_quote", "reply"]
     bookings = db.scalars(select(BookingRow).where(BookingRow.rfq_id == rfq.id)).all()
     assert [(b.status, b.simulated) for b in bookings] == [("confirmed", True)]

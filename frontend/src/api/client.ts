@@ -14,6 +14,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: {
       Accept: "application/json",
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      // Entered on the review page; kept in this browser only.
+      ...(localStorage.getItem("operator_token")
+        ? { "X-Operator-Token": localStorage.getItem("operator_token") as string }
+        : {}),
       ...init?.headers,
     },
   });
@@ -49,6 +53,113 @@ export function pauseSession(id: string): Promise<SessionDetail> {
 
 export function resumeSession(id: string): Promise<SessionDetail> {
   return request(`/api/sessions/${id}/resume`, { method: "POST" });
+}
+
+export type SessionAction = {
+  id: string;
+  kind: string;
+  purpose: string | null;
+  delivery_status: string;
+  to: string | null;
+  subject: string | null;
+  body: string | null;
+  edited_by_operator: boolean;
+  simulated: boolean;
+};
+
+export function listActions(id: string): Promise<SessionAction[]> {
+  return request(`/api/sessions/${id}/actions`);
+}
+
+export function editAction(id: string, actionId: string, body: string): Promise<SessionAction> {
+  return request(`/api/sessions/${id}/actions/${actionId}`, {
+    method: "PUT",
+    body: JSON.stringify({ body }),
+  });
+}
+
+export function sendAction(id: string, actionId: string): Promise<SessionAction> {
+  return request(`/api/sessions/${id}/actions/${actionId}/send`, { method: "POST" });
+}
+
+export function resolveAction(id: string, actionId: string, sent: boolean): Promise<SessionAction> {
+  return request(`/api/sessions/${id}/actions/${actionId}/resolve`, {
+    method: "POST",
+    body: JSON.stringify({ sent }),
+  });
+}
+
+export type ReviewQueue = {
+  sessions_total: number;
+  mail_total: number;
+  sessions: { id: string; stage: string; reason: string; paused: boolean }[];
+  mail: {
+    external_id: string;
+    sender: string;
+    subject: string;
+    kind: string | null;
+    unmatched: { kind: string; reason: string } | null;
+    tariff: { status: string; files: { filename: string; status: string }[] } | null;
+    bid: {
+      status: string;
+      reasons: string[];
+      carrier: string;
+      amount: string | null;
+      currency: string | null;
+    } | null;
+  }[];
+};
+
+export function getReview(): Promise<ReviewQueue> {
+  return request("/api/review");
+}
+
+export function resolveMail(externalId: string, approve: boolean): Promise<unknown> {
+  return request(`/api/review/mail/${externalId}/resolve`, {
+    method: "POST",
+    body: JSON.stringify({ approve }),
+  });
+}
+
+export type SandboxScenario = { id: string; title: string; version: number };
+export type SandboxMail = {
+  direction: "in" | "out";
+  at_s: number;
+  subject: string;
+  body: string;
+  purpose?: string;
+  attachments?: string[];
+};
+export type SandboxResult = {
+  scenario: string;
+  title: string;
+  seed: number;
+  passed: boolean;
+  digest: string;
+  simulated_seconds: number;
+  wall_seconds: number;
+  data: string;
+  checks: { check: string; expected: unknown; actual: unknown; passed: boolean }[];
+  requests: Record<string, Record<string, unknown>>;
+  totals: Record<string, number>;
+  threads: Record<string, SandboxMail[]>;
+  faults: { at_s: number; where: string; fault: string }[];
+  errors: Record<string, unknown>[];
+  rejection_reasons: string[];
+};
+
+// These routes exist only when the API runs with APP_MODE=sandbox.
+export function listSandboxScenarios(): Promise<SandboxScenario[]> {
+  return request("/sandbox/scenarios");
+}
+
+export function runSandboxScenario(
+  scenario: string,
+  seed: number,
+  untilS: number | null,
+): Promise<SandboxResult> {
+  const body = JSON.stringify({ scenario, seed, until_s: untilS });
+  return request("/sandbox/run", { method: "POST", body });
 }
 
 export async function runDemo(): Promise<{ id: string }> {

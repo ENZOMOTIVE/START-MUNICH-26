@@ -93,9 +93,17 @@ def build_rate_candidates(
     pickup: PickupQuote | None = None,
     fixtures_dir: str | Path | None = None,
     now: dt.datetime | None = None,
+    portal_factory=None,
 ) -> list[RateCandidate]:
     """Fixtures first; live portal/tariff pricing only when live actions are allowed (or
     live=True)."""
+    if portal_factory is not None:
+        # An injected portal (the sandbox simulator) is priced through the same live code path.
+        async def priced():
+            async with portal_factory() as portal:
+                return await live_candidates_async(rfq, pickup=pickup, portal=portal, now=now)
+
+        return asyncio.run(priced())
     live_ok = get_settings().live_allowed() if live is None else live
     if not live_ok:
         return candidates_from_fixtures(rfq, fixtures_dir=fixtures_dir, now=now)

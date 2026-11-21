@@ -1,0 +1,195 @@
+# Sandbox stack: own project name, own database, own volume, own ports. Start with
+# `make sandbox-up`. It never reads `.env`; all values below are synthetic.
+#
+# Egress: the application refuses live URLs at start-up and installs a socket guard in the API
+# and the worker. On top of that the API and the worker sit only on an internal Docker network
+# with no route out. Port 8100 is published by a small forwarder (`gateway`) instead.
+name: fiveu-sandbox
+
+x-sandbox-env: &sandbox-env
+  APP_MODE: sandbox
+  LIVE_ACTIONS_ENABLED: "false"
+  LLM_MODE: fake
+  SIMULATION_SEED: "42"
+  ROUTER_BACKEND: keyword
+  DATABASE_URL: postgresql+psycopg://fiveu_sandbox:fiveu_sandbox@postgres:5432/fiveu_sandbox
+  HACKATHON_API_BASE: https://sandbox.invalid
+  HACKATHON_GATEWAY_BASE: https://sandbox.invalid/v1/gateway
+  HACKATHON_API_KEY: sandbox-not-a-real-key
+  GATEWAY_OPENAI_KEY: ""
+  FRONTEND_ORIGIN: http://127.0.0.1:5174
+  FIXTURES_DIR: /fixtures
+
+# Drill stack (`make drill-up`, profile `drill`): a second API and worker with their own
+# database, pointed at the simulator running as a container. It exists so that killing the
+# worker and clicking in the operator UI can be checked against what the simulator received.
+x-drill-env: &drill-env
+  <<: *sandbox-env
+  DATABASE_URL: postgresql+psycopg://fiveu_sandbox:fiveu_sandbox@drill-postgres:5432/fiveu_sandbox_drill
+  HACKATHON_API_BASE: http://sim:8000
+  HACKATHON_GATEWAY_BASE: http://sim:8000/v1/gateway
+  FRONTEND_ORIGIN: http://127.0.0.1:5175
+  OPERATOR_TOKEN: sandbox-operator
+  MAILBOX_POLL_SECONDS: "1"
+
+x-drill-app: &drill-app
+  profiles: [drill]
+  build:
+    context: ./backend
+  volumes:
+    - ./fixtures:/fixtures:ro
+  networks: [internal]
+
+services:
+  drill-postgres:
+    profiles: [drill]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fiveu_sandbox
+      POSTGRES_PASSWORD: fiveu_sandbox
+      POSTGRES_DB: fiveu_sandbox_drill
+    ports:
+      - "127.0.0.1:5435:5432"
+    volumes:
+      - fiveu_sandbox_drill_pgdata:/var/lib/postgresql/data
+    networks: [internal, edge]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fiveu_sandbox -d fiveu_sandbox_drill"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  sim:
+    <<: *drill-app
+    command: ["uvicorn", "app.sandbox.server:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment: *sandbox-env
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/_sim/state')"
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  drill-api:
+    <<: *drill-app
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment: *drill-env
+    depends_on:
+      drill-postgres:
+        condition: service_healthy
+      sim:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  drill-worker:
+    <<: *drill-app
+    command: ["python", "-m", "app.workers.main"]
+    environment: *drill-env
+    depends_on:
+      drill-api:
+        condition: service_healthy
+
+  # Forwarders, as for `gateway`: 8102 is the drill API, 8101 the simulator's control port.
+  drill-gateway:
+    profiles: [drill]
+    image: alpine/socat:1.8.0.3
+    command: ["tcp-listen:8000,fork,reuseaddr", "tcp-connect:drill-api:8000"]
+    ports:
+      - "127.0.0.1:8102:8000"
+    networks: [internal, edge]
+    depends_on:
+      drill-api:
+        condition: service_healthy
+
+  sim-gateway:
+    profiles: [drill]
+    image: alpine/socat:1.8.0.3
+    command: ["tcp-listen:8000,fork,reuseaddr", "tcp-connect:sim:8000"]
+    ports:
+      - "127.0.0.1:8101:8000"
+    networks: [internal, edge]
+    depends_on:
+      sim:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fiveu_sandbox
+      POSTGRES_PASSWORD: fiveu_sandbox
+      POSTGRES_DB: fiveu_sandbox
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - fiveu_sandbox_pgdata:/var/lib/postgresql/data
+    networks: [internal, edge]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fiveu_sandbox -d fiveu_sandbox"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment: *sandbox-env
+    volumes:
+      - ./fixtures:/fixtures:ro
+    networks: [internal]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # The only container with a published port. It forwards 127.0.0.1:8100 to the API and holds
+  # no application code, so the API itself can stay on the network that has no route out.
+  gateway:
+    image: alpine/socat:1.8.0.3
+    command: ["tcp-listen:8000,fork,reuseaddr", "tcp-connect:api:8000"]
+    ports:
+      - "127.0.0.1:8100:8000"
+    networks: [internal, edge]
+    depends_on:
+      api:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+    command: ["python", "-m", "app.workers.main"]
+    environment: *sandbox-env
+    volumes:
+      - ./fixtures:/fixtures:ro
+    networks: [internal]
+    depends_on:
+      api:
+        condition: service_healthy
+
+networks:
+  internal:
+    internal: true
+  edge: {}
+
+volumes:
+  fiveu_sandbox_pgdata:
+  fiveu_sandbox_drill_pgdata:

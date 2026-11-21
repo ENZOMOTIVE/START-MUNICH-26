@@ -1,0 +1,97 @@
+# Bounded, supervised live run. Own project, database and volume; the demo and sandbox stacks
+# are not touched. The image is built once and pinned by LIVE_TAG: no source is mounted, so
+# editing the checkout never changes a running worker.
+#
+#   docker compose -f compose.live.yaml --env-file .env.live up -d postgres api
+#   (seed the mailbox cursor so that old mail is not read again), then: ... up -d worker
+#
+# `.env` supplies the team key (never printed), `.env.live` the operator token and LIVE_TAG.
+# Stop the dispatcher with:  docker compose -f compose.live.yaml stop worker   (data is kept)
+name: fiveu-live
+
+x-live-env: &live-env
+  APP_MODE: live
+  LIVE_ACTIONS_ENABLED: "true"
+  DATABASE_URL: postgresql+psycopg://fiveu_live:fiveu_live@postgres:5432/fiveu_live
+  FRONTEND_ORIGIN: http://127.0.0.1:5176
+  FIXTURES_DIR: /fixtures
+  OPERATOR_TOKEN: ${OPERATOR_TOKEN:?set in .env.live}
+  # Every new request waits, paused, until an operator admits it (POST /api/sessions/{id}/admit).
+  HOLD_NEW_REQUESTS: "true"
+  RUN_LIMITS: "true"
+  RUN_MINUTES: "60"
+  RUN_MAX_RFQS: "10"
+  RUN_MAX_MAILS: "40"
+  RUN_MAX_BOOKINGS: "10"
+  RUN_MAX_MODEL_CALLS: "10"
+  RUN_MAX_TOKENS_IN: "20000"
+  RUN_MAX_TOKENS_OUT: "5000"
+  RUN_MAX_SPEND_USD: "1.00"
+  # One model reading per admitted request. Prices: platform.openai.com/docs/pricing, standard
+  # tier, read 2026-11-21 (USD per 1M tokens).
+  LLM_MODE: gateway
+  EXTRACTION_MODEL: gpt-4o-mini
+  MODEL_PRICE_IN_USD: "0.15"
+  MODEL_PRICE_OUT_USD: "0.60"
+  ROUTER_BACKEND: keyword
+  # The mailbox allows one poll every 5 seconds per team key.
+  MAILBOX_POLL_SECONDS: "5"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fiveu_live
+      POSTGRES_PASSWORD: fiveu_live
+      POSTGRES_DB: fiveu_live
+    ports:
+      - "127.0.0.1:5436:5432"
+    volumes:
+      - fiveu_live_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fiveu_live -d fiveu_live"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    image: fiveu-live:${LIVE_TAG:?set in .env.live}
+    build:
+      context: ./backend
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000
+    env_file:
+      - .env
+    environment: *live-env
+    ports:
+      - "127.0.0.1:8200:8000"
+    volumes:
+      - ./fixtures:/fixtures:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # The one workflow owner: it holds the worker lock on this database for as long as it runs.
+  worker:
+    image: fiveu-live:${LIVE_TAG:?set in .env.live}
+    command: ["python", "-m", "app.workers.main"]
+    env_file:
+      - .env
+    environment: *live-env
+    volumes:
+      - ./fixtures:/fixtures:ro
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  fiveu_live_pgdata:
