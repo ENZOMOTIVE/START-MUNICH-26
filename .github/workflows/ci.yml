@@ -1,0 +1,64 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fiveu
+          POSTGRES_PASSWORD: fiveu
+          POSTGRES_DB: fiveu
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fiveu -d fiveu"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      APP_MODE: demo
+      LIVE_ACTIONS_ENABLED: "false"
+      DATABASE_URL: postgresql+psycopg://fiveu:fiveu@127.0.0.1:5432/fiveu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        working-directory: backend
+        run: uv sync --group dev
+      - name: Ruff
+        working-directory: backend
+        run: uv run ruff check .
+      - name: Pytest
+        working-directory: backend
+        run: uv run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    env:
+      APP_MODE: demo
+      LIVE_ACTIONS_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        working-directory: frontend
+        run: pnpm install
+      - name: Typecheck
+        working-directory: frontend
+        run: pnpm typecheck
+      - name: Build
+        working-directory: frontend
+        run: pnpm build

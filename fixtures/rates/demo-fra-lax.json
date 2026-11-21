@@ -1,0 +1,45 @@
+{
+  "source_ref": "fixtures/rates/demo-fra-lax.json",
+  "source_version": "demo-2026-11",
+  "candidates": [
+    {
+      "carrier": "Yellowtail Air Freight",
+      "carrier_code": "YT",
+      "total": "1250.00",
+      "currency": "EUR",
+      "transit_days": 5,
+      "rate_id": "YT-FRA-LAX-001",
+      "complete": true,
+      "charges": [
+        {"code": "FREIGHT", "amount": "1100.00", "currency": "EUR", "unit": "shipment"},
+        {"code": "FUEL", "amount": "150.00", "currency": "EUR", "unit": "shipment"}
+      ]
+    },
+    {
+      "carrier": "Helix Air Freight",
+      "carrier_code": "HX",
+      "total": "1580.00",
+      "currency": "EUR",
+      "transit_days": 3,
+      "rate_id": "HX-FRA-LAX-001",
+      "complete": true,
+      "charges": [
+        {"code": "FREIGHT", "amount": "1400.00", "currency": "EUR", "unit": "shipment"},
+        {"code": "FUEL", "amount": "180.00", "currency": "EUR", "unit": "shipment"}
+      ]
+    },
+    {
+      "carrier": "Gannet Airways",
+      "carrier_code": "GN",
+      "total": "1420.00",
+      "currency": "EUR",
+      "transit_days": 4,
+      "rate_id": "GN-FRA-LAX-001",
+      "complete": true,
+      "charges": [
+        {"code": "FREIGHT", "amount": "1280.00", "currency": "EUR", "unit": "shipment"},
+        {"code": "FUEL", "amount": "140.00", "currency": "EUR", "unit": "shipment"}
+      ]
+    }
+  ]
+}
