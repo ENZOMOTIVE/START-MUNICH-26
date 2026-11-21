@@ -78,6 +78,9 @@ RFQ_BODY = (
     "Hello,\n\nplease quote 300 kg, 1.2 cbm from FRA to ORD, cheapest option.\n\nThanks,\nAnna"
 )
 TRUTH = ["FRA", "ORD", "300 kg"]
+PICKUP_BODY = "Please quote 300 kg, 1.2 cbm from FRA to ORD with pickup in zone 60."
+DFW_BODY = "Please quote 300 kg, 1.2 cbm from FRA to DFW."
+DFW_CUSTOMER = {"budget": "5000.00", "truth": ["FRA", "DFW", "300 kg"]}
 DOCS = [
     {"id": 1, "filename": "DGD_UN3480.pdf", "size": 48211},
     {"id": 2, "filename": "MSDS_lithium_cells.pdf", "size": 90112},
@@ -564,7 +567,7 @@ _ALL = [
                 "blocked_on": "booking_failed",
                 "booking.status": "failed",
                 "customer.outcome": "accepted",
-                "outbound": ["first_quote"],
+                "outbound": ["first_quote", "booking_failed"],
             },
             "_totals": {"booked": 0, "bookings_created": 0},
         },
@@ -572,8 +575,49 @@ _ALL = [
         title="Rate expires before the acceptance arrives: no booking is claimed, a person sees it",
     ),
     scenario(
+        "pickup_with_trucker",
+        [rfq(body=PICKUP_BODY)],
+        {
+            # Bravo 585.00 + the first usable trucker bid 85.00 = 670.00; the 92.00 bid is later.
+            "rfq1": {
+                **BOOKED,
+                "quote.carrier": "Bravo Freight",
+                "quote.total": "670.00",
+                "customer.priced_messages": 1,
+                "outbound": ["first_quote", "booking_confirmed"],
+            },
+            "_totals": {"carrier_mails_sent": 3},
+        },
+        truckers={
+            "taunusfracht@hackloop.mail": {"price": "92.00", "delay": 25},
+            "isarwelle-spedition@hackloop.mail": {"price": "85.00", "delay": 15},
+            "domblick-kurierdienst@hackloop.mail": {},
+        },
+        title="Door pickup: three truckers are asked, the first usable bid is added once",
+    ),
+    scenario(
+        "pickup_no_reply",
+        [rfq(body=PICKUP_BODY)],
+        {
+            "rfq1": {
+                "stage": "exception",
+                "blocked_on": "no_carrier_reply",
+                "quote": None,
+                "outbound": ["no_offer"],
+                "customer.outcome": "no_offer",
+            },
+            "_totals": {"carrier_mails_sent": 3, "answered_in_time": 1},
+        },
+        truckers={
+            "taunusfracht@hackloop.mail": {},
+            "isarwelle-spedition@hackloop.mail": {},
+            "domblick-kurierdienst@hackloop.mail": {},
+        },
+        title="No trucker answers: the customer is told before the deadline, nothing is quoted",
+    ),
+    scenario(
         "pickup_no_trucker",
-        [rfq(body="Please quote 300 kg, 1.2 cbm from FRA to ORD with pickup in zone 60.")],
+        [rfq(body="Please quote 300 kg, 1.2 cbm from FRA to ORD with pickup in zone 99.")],
         {
             "rfq1": {
                 "stage": "exception",
@@ -582,26 +626,66 @@ _ALL = [
                 "outbound": ["no_offer"],
             }
         },
-        title="Door pickup with no trucker price: no incomplete offer is quoted",
+        title="Pickup zone no listed trucker serves: no incomplete offer is quoted",
     ),
     scenario(
-        "unbookable_only",
-        [
-            rfq(
-                body="Please quote 300 kg, 1.2 cbm from FRA to DFW.",
-                subject="Quote FRA-DFW",
-                customer={"budget": "5000.00", "truth": ["FRA", "DFW", "300 kg"]},
-            )
-        ],
+        "email_booking",
+        [rfq(body=DFW_BODY, subject="Quote FRA-DFW", customer=DFW_CUSTOMER)],
+        {
+            "rfq1": {
+                **BOOKED,
+                # Elbflug's tariff price (621.00, not hand-checked) is below Yellowtail's
+                # hand-worked 990.00 for this lane, so the cheapest tariff offer is Elbflug's.
+                "quote.carrier": "Elbflug Air Freight",
+                "booking.portal_requests": 0,
+                "outbound": ["first_quote", "booking_submitted", "booking_confirmed"],
+            },
+            "_totals": {"carrier_mails_sent": 1, "bookings_created": 0},
+        },
+        airlines={
+            "yellowtail-air-freight@hackloop.mail": {"delay": 30},
+            "elbflug-air-freight@hackloop.mail": {"delay": 30},
+        },
+        title="Tariff-only offer: booked by mail, confirmed only when the airline confirms",
+    ),
+    scenario(
+        "email_booking_silent",
+        [rfq(body=DFW_BODY, subject="Quote FRA-DFW", customer=DFW_CUSTOMER)],
         {
             "rfq1": {
                 "stage": "accepted",
-                "blocked_on": "manual_booking_required",
-                "booking": None,
+                "booking.status": "submitted",
                 "customer.outcome": "accepted",
-            }
+                "outbound": ["first_quote", "booking_submitted"],
+            },
+            "_totals": {"booked": 0},
         },
-        title="Only tariff carriers (no portal rate): accepted quote waits for a person to book",
+        airlines={
+            "yellowtail-air-freight@hackloop.mail": {},
+            "elbflug-air-freight@hackloop.mail": {},
+        },
+        title="Airline never confirms a mailed booking: it stays submitted, never 'confirmed'",
+    ),
+    scenario(
+        "tariff_update",
+        [
+            {
+                "key": "tariff",
+                "from": AIRLINE,
+                "subject": "Tariff December 2026",
+                "body": "Please find our new tariff attached.",
+                "attachments": [
+                    {
+                        "id": 1,
+                        "filename": "aurelia-air-cargo-tariff-2026-12.xlsx",
+                        "size": 2048,
+                        "content": "December tariff, not yet approved",
+                    }
+                ],
+            }
+        ],
+        {"_totals": {"tariffs_for_review": 1, "mails_stored": 1}},
+        title="A tariff file we have not approved is flagged for review, not used",
     ),
 ]
 

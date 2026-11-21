@@ -113,6 +113,51 @@ def final_quote(
     )
 
 
+def pickup_enquiry(zone, airport, weight_kg, volume_m3, ref: str) -> dict:
+    """To a trucker. `ref` in the subject is how the reply is matched back to the request."""
+    cargo = f"{weight_kg} kg" + (f", {volume_m3} cbm" if volume_m3 else "")
+    body = "\n\n".join(
+        [
+            "Hello,",
+            "Please send us your price for one collection:",
+            f"From: pickup zone {zone}\nTo: {airport} airport\nCargo: {cargo}",
+            "Please reply to this email with one all-in price and its currency.",
+            SIGNATURE,
+        ]
+    )
+    subject = f"Pickup enquiry: zone {zone} to {airport} [ref {ref}]"
+    return {"purpose": "carrier_enquiry", "subject": subject, "body": body}
+
+
+def carrier_booking_request(
+    origin, destination, weight_kg, total, currency, team_reference
+) -> dict:
+    """To an airline that is not bookable on the portal."""
+    body = "\n\n".join(
+        [
+            "Hello,",
+            "Please book the following shipment at your tariff rate:",
+            f"Route: {origin} to {destination}\nCargo: {weight_kg} kg\n"
+            f"Agreed price: {currency} {total}\nOur reference: {team_reference}",
+            "Please confirm with your booking reference.",
+            SIGNATURE,
+        ]
+    )
+    subject = f"Booking request {origin}-{destination} [ref {team_reference}]"
+    return {"purpose": "carrier_booking", "subject": subject, "body": body}
+
+
+def booking_failed(name, subject, carrier, reason: str) -> dict:
+    return _mail(
+        "booking_failed",
+        subject,
+        name,
+        f"I am sorry, I could not complete the booking with {carrier}: {reason}.",
+        "Nothing has been booked. If you still want to ship, reply to this email and I will "
+        "send you an updated offer.",
+    )
+
+
 def no_offer(name, subject, origin, destination, reason: str) -> dict:
     return _mail(
         "no_offer",

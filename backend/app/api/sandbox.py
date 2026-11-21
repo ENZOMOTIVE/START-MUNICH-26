@@ -1,8 +1,9 @@
 """Sandbox console API. `app.main` registers this router only when APP_MODE=sandbox."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from app.api.sessions import operator
 from app.core import netguard
 from app.core.config import get_settings
 from app.core.errors import NotFoundError
@@ -15,6 +16,7 @@ router = APIRouter(prefix="/sandbox")
 class RunRequest(BaseModel):
     scenario: str
     seed: int | None = None
+    until_s: int | None = None  # stop at this simulated second, to look at a run part-way
 
 
 @router.get("/status")
@@ -44,9 +46,9 @@ def scenarios():
     ]
 
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(operator)])
 def run(body: RunRequest):
     # A plain `def`: FastAPI runs it in a worker thread, where the pricing code may use asyncio.
     if body.scenario not in SCENARIOS:
         raise NotFoundError(f"scenario {body.scenario}")
-    return runner.run(body.scenario, body.seed)
+    return runner.run(body.scenario, body.seed, body.until_s)

@@ -64,6 +64,17 @@ def airports() -> tuple[frozenset[str], frozenset[str]]:
     return frozenset(origins), frozenset(served | origins)
 
 
+@lru_cache
+def truckers_for_zone(zone: str) -> tuple[tuple[str, str], ...]:
+    """(name, email) of every listed trucker that serves this pickup zone."""
+    with (_APP / "platform" / "data" / "carrier-list.csv").open(encoding="utf-8") as handle:
+        return tuple(
+            (row["name"], row["email"].strip().lower())
+            for row in csv.DictReader(handle)
+            if row["kind"] == "trucker" and str(zone) in row["serves"].split()
+        )
+
+
 def _decimal(raw: str) -> Decimal | None:
     if re.fullmatch(r"\d{1,3}\.\d{3}", raw):
         return None  # 1.200 is 1200 in one notation and 1.2 in another: ask, do not guess

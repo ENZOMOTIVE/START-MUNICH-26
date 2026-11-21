@@ -53,11 +53,11 @@ It cannot touch the demo stack (`compose.yaml`, port 5433) or anything live.
 | Adapters | Without an installed simulator, `get_adapters()` raises `sandbox_adapters_missing` instead of falling back | `backend/app/platform/__init__.py` |
 | In-memory transport | The real mailbox, booking, portal and gateway client code runs against `httpx.MockTransport`; no socket exists | `backend/app/sandbox/world.py` |
 | Socket guard | The API, the worker and the CLI patch `socket` at start so only loopback and the database host can be reached; it is installed again on every restart | `backend/app/core/netguard.py` |
-| Docker network | The worker and database are on an `internal` network with no route out | `compose.sandbox.yaml` |
+| Docker network | The API and the worker are only on an `internal` network with no route out. Port 8100 is published by a forwarder container that holds no application code | `compose.sandbox.yaml` |
 | Console | `/sandbox/*` routes are registered only in sandbox mode (404 otherwise) | `backend/app/main.py` |
 
-Known limit: the API container also sits on a normal network, because Docker cannot publish a
-port from an internal one. For the API, the socket guard is the egress control, not the network.
+The console can stop a run at a simulated second ("Stop at simulated second"), which is how you
+step through a scenario: runs are deterministic, so a later stop shows the same run further on.
 
 ## What the simulator provides
 
@@ -93,8 +93,15 @@ table is unverified.
   `rate_id`/`team_reference`.
 - A job left `claimed` by a dead worker is taken back after 60 s; failed jobs back off.
 - One malformed portal answer no longer aborts pricing for the whole request.
-- Selection prefers offers that have a portal `rate_id`; a tariff-only offer is used only when
-  nothing bookable exists, and its acceptance waits as `manual_booking_required`.
+- Selection prefers offers that have a portal `rate_id`. A tariff-only offer is used only when
+  nothing bookable exists; it is booked by a mail to the airline and stays `submitted` until
+  the airline's "Booking <reference> confirmed" mail arrives.
+- A door pickup asks up to three truckers that serve the zone and adds the first usable bid
+  once. If nobody answers, the customer is told a minute before the deadline.
+- Live sends are spaced to stay under 60 mails a minute; mail left `pending` is sent by a
+  sweep, and a first quote is never sent after its request expired.
+- Checked against the public API description on 2026-11-21: `MessageIn`, `BookingIn`,
+  `BookingOut`, the 201/200 booking retry rule and the confirmation mail. Still never called.
 
 ## Evidence
 
@@ -111,30 +118,31 @@ scenario (`backend/app/sandbox/scenarios.py`) or a test under `backend/tests/`.
 | T1 | Lost acknowledgement stays UNKNOWN, no resend | `platform/outbox.py` | `lost_ack`, `crash_recovery` | PASS | no operator action to resolve UNKNOWN |
 | T1 | Dead worker's job is recovered | `db/repositories.py` | `test_a_job_left_claimed_by_a_dead_worker_is_taken_back` | PASS | |
 | T1 | Routing by sender, thread and evidence | `platform/routing.py` | `tests/router/` | PASS | |
-| T1 | Gateway usage with cost kind | `platform/gateway.py` | usage rows written, `cost_kind=unknown` | NOT IMPLEMENTED | no cost ledger or hourly accounting |
-| T1 | Team-wide send throttling | | | NOT IMPLEMENTED | |
+| T1 | Gateway usage with cost kind | `platform/gateway.py`, `GET /api/usage` | `test_usage_reports_cost_as_unknown_until_it_is_known` | PASS | calls are counted; cost stays `unknown` because no price list is verified; no hourly accounting |
+| T1 | Send throttling under the 60 mails/minute limit | `platform/outbox.py` | `test_live_sends_are_spaced_under_the_mailbox_limit` | PASS | not locked across several workers |
+| T1 | Unsent mail is retried, never after the deadline | `platform/outbox.py` (`deliver_pending`) | same test; `expired_backlog` | PASS | |
 | T2 | Every tariff file approved or a visible exception | `pricing/parsers/` | `tests/pricing/test_ingest.py` | PASS | needs the `parsers` dependency group; CI skips it |
 | T2 | Independent price fixtures | `pricing/engine.py` | `tests/sandbox/test_pricing_oracle.py` (hand-worked from the source tariff) | PASS | |
 | T2 | Missing charge, currency, validity or FX blocks completeness | `pricing/contract.py` | `test_pricing_oracle.py`, `usd_lane`, `pickup_no_trucker` | PASS | |
 | T2 | Portal faults do not stall other sources | `pricing/portal_client.py` | `portal_faults`, `slow_carrier` | PASS | malformed answer fixed in this change |
 | T2 | Committed decisions keep their evidence | `quote_decisions.evidence` | `test_committed_quote_keeps_its_own_evidence` | PASS | |
-| T2 | Detect changed tariffs or datasets, version new arrivals | | | NOT IMPLEMENTED | `tariff` mail has no handler |
+| T2 | Detect a changed or new tariff file | `workflows/followup.py` (`handle_tariff_mail`) | `tariff_update`, `test_an_approved_tariff_file_is_recognised` | PASS | the file is flagged for review in `GET /api/review`; it is not parsed or versioned automatically |
 | T3 | Extract and validate RFQ fields with evidence | `workflows/extract.py`, `rfq.py` | `happy_path`, `model_extraction`, `model_down`, extraction tests | PASS | rules cover IATA codes and kg only |
 | T3 | Clarify missing information and documents | `workflows/rfq.py` | `missing_info`, `dg_missing_docs`, `dg_conflict`, `dg_conflict_cleared`, `dg_false_alarm` | PASS | |
 | T3 | Cheapest and fastest; no transit cannot win fastest | `workflows/selection.py` | `fastest`, `test_fastest_never_picks_an_offer_without_transit_time` | PASS | |
-| T3 | Contact two to five carriers, reconcile bids | | | NOT IMPLEMENTED | carrier bids are routed and ignored |
+| T3 | Ask truckers for a door pickup, use the bid | `workflows/rfq.py`, `followup.py` | `pickup_with_trucker`, `pickup_no_reply`, `pickup_no_trucker` | PASS | up to three truckers; the first usable EUR bid is used, a later cheaper one is only recorded |
+| T3 | Ask airlines for bids (two to five carriers) | | | NOT IMPLEMENTED | airline prices come from the portal and the approved tariffs; the organiser's sourcing rule is unconfirmed |
 | T3 | One first quote; late bids and duplicates change nothing | `workflows/rfq.py` | `duplicates`, `late_bid` | PASS | `late_bid` passes because bids are not consumed |
 | T3 | Acceptance matched to the stored offer; booking retried with the same identity | `workflows/booking.py` | `duplicates`, `booking_retry` | PASS | |
-| T3 | Expired or changed offers are escalated | `workflows/booking.py` | `rate_expired_at_booking` | PASS | the customer is not told; no refresh |
-| T3 | Pickup priced from a trucker | | `pickup_no_trucker` shows the gap | NOT IMPLEMENTED | door pickup always ends without an offer |
-| T3 | Book offers that have no portal rate (email booking) | | `unbookable_only` shows the gap | NOT IMPLEMENTED | waits as `manual_booking_required` |
+| T3 | Expired or changed offers are escalated | `workflows/booking.py` | `rate_expired_at_booking` | PASS | the customer is told nothing was booked; a new offer is not sent automatically |
+| T3 | Book offers that have no portal rate, by mail | `workflows/booking.py` (`_book_by_mail`) | `email_booking`, `email_booking_silent` | PASS | the mail wording and the airline's reply format are assumptions |
 | T4 | Journey can be reconstructed | session events | `events` in every scenario result | PASS | |
 | T4 | Tracking never invents a status | `workflows/followup.py`, `replies.py` | `happy_path`, `test_tracking_answer_uses_only_the_recorded_update` | PASS | status text comes from the first line of the tracking mail |
-| T4 | Duplicate or unmatched updates | `workflows/followup.py` | `expired_backlog` (unmatched mail) | PASS | unmatched mail is flagged on the message, not shown in the UI |
+| T4 | Duplicate or unmatched updates | `workflows/followup.py`, `GET /api/review` | `expired_backlog`, `test_review_list_shows_what_waits_for_a_person` | PASS | the review list is an API; the board does not show it yet |
 | T4 | After pause, no new action starts | `platform/outbox.py`, `booking.py` | `pause_takeover` | PASS | |
 | T4 | Live Sessions UI and sandbox console | `frontend/` | browser run of `dg_missing_docs` | PASS | |
-| T4 | SSE stream with reconnect | | | NOT IMPLEMENTED | the board polls every 2 s |
-| T4 | Authenticated operator commands | | | NOT IMPLEMENTED | no auth; localhost only |
+| T4 | Event stream with reconnect | `GET /api/sessions/{id}/stream` | `test_event_stream_resumes_without_repeating` | PASS | the board still polls every 2 s; it does not use the stream yet |
+| T4 | Operator commands need a token | `api/sessions.py` (`OPERATOR_TOKEN`) | `test_pause_needs_the_operator_token_when_one_is_set` | PASS | off unless `OPERATOR_TOKEN` is set; one shared token, no users |
 | T5 | One replay command with controlled time | `sandbox/runner.py` | `make simulate` | PASS | |
 | T5 | Faults: 429, 503, backlog, duplicate, restart, lost acknowledgement | `sandbox/world.py` | scenarios above | PASS | |
 | T5 | Report with real outcomes | `sandbox/runner.py` | `reports/sandbox-report.md` | PASS | |

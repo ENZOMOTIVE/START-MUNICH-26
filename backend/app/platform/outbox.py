@@ -6,7 +6,7 @@ UNKNOWN is never resent automatically. A unique action key stops a second intent
 make the external send exactly-once.
 """
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,9 +16,10 @@ from app.core import clock
 from app.core.config import get_settings
 from app.core.errors import DomainError
 from app.db import repositories
-from app.db.models import ActionIntentRow, SessionRow
+from app.db.models import ActionIntentRow, RfqRow, SessionRow
 from app.platform.mailbox import MailboxError
 
+LAST_SEND = "last_send_ms"  # stored in the cursor table: time of the last send, in ms
 SEND_LEASE = timedelta(seconds=30)  # longer than any mailbox call; a live sender finishes first
 
 
@@ -62,6 +63,21 @@ def deliver_intent(db: Session, intent: ActionIntentRow, mailbox) -> ActionInten
         # Read the committed flag: an operator's pause must beat a stale copy in this session.
         if db.scalar(select(SessionRow.paused).where(SessionRow.id == session.id)):
             raise DomainError("session_paused")
+    rfq = db.get(RfqRow, intent.rfq_id)
+    if intent.kind == "first_quote" and rfq is not None:
+        expires = rfq.expires_at if rfq.expires_at.tzinfo else rfq.expires_at.replace(tzinfo=UTC)
+        if clock.now() >= expires:
+            # However this send was reached (retry, restart, sweep): no quote after the deadline.
+            _record(db, intent, session, "failed", "send_failed", "request expired before sending")
+            raise DomainError("expired")
+    settings = get_settings()
+    if settings.live_allowed() and settings.send_min_interval_ms:
+        # shortcut: two workers can read the same value and both send; add a row lock if more
+        # than one worker ever sends.
+        now_ms = int(clock.now().timestamp() * 1000)
+        if now_ms - repositories.get_cursor(db, LAST_SEND) < settings.send_min_interval_ms:
+            raise DomainError("send_throttled")
+        repositories.advance_cursor(db, LAST_SEND, now_ms)
     payload = dict(intent.payload or {})
     payload["_sending_at"] = clock.now().isoformat()
     intent.payload = payload
@@ -87,6 +103,27 @@ def deliver_intent(db: Session, intent: ActionIntentRow, mailbox) -> ActionInten
     flag_modified(intent, "payload")
     db.flush()
     return intent
+
+
+def deliver_pending(db: Session, mailbox, threads: list[str] | None = None) -> int:
+    """Send every mail that is still `pending` (throttled, rate-limited or never reached the
+    mailbox). `threads` limits it to those customer threads."""
+    query = select(ActionIntentRow).where(
+        ActionIntentRow.delivery_status == "pending", ActionIntentRow.kind != "booking"
+    )
+    if threads is not None:
+        query = query.where(ActionIntentRow.payload["thread_id"].astext.in_(threads))
+    sent = 0
+    for intent in db.scalars(query.order_by(ActionIntentRow.created_at)).all():
+        if "body" not in (intent.payload or {}):
+            continue
+        try:
+            deliver_intent(db, intent, mailbox)
+            sent += 1
+        except DomainError as exc:
+            if exc.code == "send_throttled":
+                break  # the next pass continues
+    return sent
 
 
 def expire_stale_sends(db: Session) -> int:

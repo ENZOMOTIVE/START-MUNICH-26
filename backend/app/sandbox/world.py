@@ -66,6 +66,7 @@ class World:
         self.fault_log: list[dict] = []
         self.model_calls: list[dict] = []
         self.stray: list[dict] = []  # outbound mail that is not a reply in a customer thread
+        self.carrier_mail: list[dict] = []  # outbound mail to a trucker or airline in the scenario
         for mail in scenario["mails"]:
             self.schedule(mail, mail.get("at", 0))
 
@@ -114,8 +115,8 @@ class World:
                 "to": TEAM,
                 "subject": mail["subject"],
                 "body": mail["body"],
-                "in_reply_to": request["last"] if request else None,
-                "references": [request["root"]] if request else [],
+                "in_reply_to": request["last"] if request else mail.get("in_reply_to"),
+                "references": [request["root"]] if request else mail.get("references", []),
                 "attachments": mail.get("attachments", []),
                 "received_at": received.isoformat(),
             }
@@ -205,10 +206,38 @@ class World:
             return f"{currency} {amount} is above our budget"
         return None
 
+    def _carrier_reads(self, item: dict) -> None:
+        """A trucker answers an enquiry with a price; an airline confirms a booking request.
+        A carrier with no entry in the scenario, or an entry without a price, stays silent."""
+        trucker = self.scenario.get("truckers", {}).get(item["to"])
+        airline = self.scenario.get("airlines", {}).get(item["to"])
+        if trucker is None and airline is None:
+            self.stray.append(item)
+            return
+        self.carrier_mail.append(item)
+        thread = {"references": [item["id"]], "in_reply_to": item["id"], "from": item["to"]}
+        if trucker and trucker.get("price"):
+            body = f"Hello, we can collect this for EUR {trucker['price']} all-in."
+            reply = {**thread, "subject": f"Re: {item['subject']}", "body": body}
+            self.schedule(reply, trucker.get("delay", 20))
+        reference = re.search(r"TM-[0-9a-f]{32}", item["body"])
+        if airline and reference:
+            booking = "BK-" + _digest(reference.group(0))[:8]
+            body = f"Your booking is confirmed. Your reference: {reference.group(0)}"
+            reply = {**thread, "subject": f"Booking {booking} confirmed", "body": body}
+            self.schedule(reply, airline.get("delay", 30))
+
+    def _attachment(self, message_id: int, attachment_id: int) -> httpx.Response:
+        mail = next((m for m in self.inbox if m["id"] == message_id), {})
+        for attachment in mail.get("attachments", []):
+            if attachment.get("id") == attachment_id and "content" in attachment:
+                return httpx.Response(200, content=attachment["content"].encode())
+        return httpx.Response(404, json={"detail": "no such attachment"})
+
     def _customer_reads(self, item: dict) -> None:
         key = self.threads.get(item["in_reply_to"])
         if key is None:
-            self.stray.append(item)
+            self._carrier_reads(item)
             return
         self.threads[item["id"]] = key
         request, text, lower = self.requests[key], item["body"], item["body"].lower()
@@ -372,7 +401,8 @@ class World:
             return httpx.Response(409, json={"detail": "team_reference used with another rate"})
         if fault == "lost_ack":
             raise httpx.ReadTimeout("sandbox: booked, the answer was lost")
-        return httpx.Response(200, json=booking)
+        # As documented: 201 for a new booking, 200 when the same pair is sent again.
+        return httpx.Response(201 if self.book_requests[reference] == 1 else 200, json=booking)
 
     # ---------- model gateway ----------
     def _chat(self, request: httpx.Request) -> httpx.Response:
@@ -412,6 +442,9 @@ class World:
             return self._brackets(request)
         if route == ("GET", "/v1/portal/rates"):
             return self._rate(request)
+        attachment = re.fullmatch(r"/v1/mailbox/messages/(\d+)/attachments/(\d+)", route[1])
+        if route[0] == "GET" and attachment:
+            return self._attachment(int(attachment.group(1)), int(attachment.group(2)))
         if route == ("POST", "/v1/portal/bookings"):
             return self._book(request)
         if route == ("POST", "/v1/gateway/chat/completions"):

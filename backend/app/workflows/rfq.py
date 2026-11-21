@@ -14,18 +14,22 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core import clock
+from app.core.config import get_settings
 from app.core.errors import DomainError
 from app.db import repositories
 from app.db.models import ActionIntentRow, MessageRow, QuoteDecisionRow, RfqRow, SessionRow
 from app.platform import get_adapters
 from app.platform.decisions import reply_text
 from app.platform.outbox import deliver_intent
+from app.pricing.pickup import PickupQuote, airport_for_zone
+from app.pricing.quote_models import Evidence
 from app.pricing.tariffs import load_fixture_candidates
 from app.workflows import replies
-from app.workflows.extract import REQUIRED, assess_dg, merge, model_fill
+from app.workflows.extract import REQUIRED, assess_dg, merge, model_fill, truckers_for_zone
 from app.workflows.selection import choose_offer_with_evidence
 
 RFQ_TTL = timedelta(minutes=6)
+WAITING_FOR_PICKUP = "waiting_for_carrier:pickup"
 
 
 def _aware(dt: datetime) -> datetime:
@@ -155,18 +159,22 @@ def outbound(
     rfq: RfqRow,
     action_key: str,
     kind: str,
-    reply_to: MessageRow,
+    reply_to: MessageRow | None,
     mail: dict,
     workflow_status: str = "pending",
     extra: dict | None = None,
+    to: str | None = None,
 ) -> tuple[ActionIntentRow, bool]:
-    """Get or create the one intent for this action. Returns (intent, created)."""
+    """Get or create the one intent for this action. Returns (intent, created).
+
+    A reply goes to `reply_to`'s sender in its thread; `to` starts a new thread with a carrier.
+    """
     intent = repositories.action_intent_by_key(db, action_key)
     if intent is not None:
         return intent, False
-    external = reply_to.external_id
+    external = reply_to.external_id if reply_to is not None else ""
     payload = {
-        "to": reply_to.sender,
+        "to": to or reply_to.sender,
         "subject": mail["subject"],
         "body": mail["body"],
         "in_reply_to": int(external) if external.isdigit() else None,
@@ -349,7 +357,14 @@ def advance(db: Session, session: SessionRow, rfq: RfqRow, root: MessageRow, fou
             {"dangerous_goods": dg["status"], "source_mails": found["sources"], "simulated": True},
         )
 
-    candidates = load_fixture_candidates(db, rfq)
+    pickup = None
+    if rfq.pickup_required and rfq.pickup_zone and _sourced():
+        # A door pickup needs a trucker's price. Fixtures (demo) already contain one.
+        pickup = pickup_bid(db, session, rfq)
+        if pickup is None and _ask_truckers(db, session, rfq):
+            return session
+    session.exception = None if session.exception == WAITING_FOR_PICKUP else session.exception
+    candidates = load_fixture_candidates(db, rfq, pickup=pickup)
     session.stage = "pricing"
     repositories.append_event(
         db,
@@ -395,6 +410,94 @@ def advance(db: Session, session: SessionRow, rfq: RfqRow, root: MessageRow, fou
     )
     commit_first_quote(db, session, rfq, selected, evidence=evidence)
     return session
+
+
+def _sourced() -> bool:
+    """True when prices come from the portal and carriers rather than from demo fixtures."""
+    return get_adapters().get("rates") is not None or get_settings().live_allowed()
+
+
+def pickup_bid(db: Session, session: SessionRow, rfq: RfqRow) -> PickupQuote | None:
+    """The cheapest usable trucker bid recorded for this request."""
+    bids = [
+        e.payload
+        for e in repositories.events_for(db, session.id)
+        if e.type == "carrier_bid" and e.payload.get("currency") == "EUR"
+    ]
+    if not bids:
+        return None
+    best = min(bids, key=lambda b: Decimal(b["amount"]))
+    return PickupQuote(
+        zone=str(rfq.pickup_zone),
+        airport=airport_for_zone(rfq.pickup_zone) or rfq.origin,
+        cost=Decimal(best["amount"]),
+        currency="EUR",
+        trucker=best["carrier"],
+        evidence=Evidence(source_file=f"mail:{best['external_id']}", method="bid"),
+    )
+
+
+def _ask_truckers(db: Session, session: SessionRow, rfq: RfqRow) -> bool:
+    """Ask up to three truckers that serve the zone. False when there is nobody to ask."""
+    truckers = truckers_for_zone(str(rfq.pickup_zone))[:3]
+    if not truckers:
+        return False
+    airport = airport_for_zone(rfq.pickup_zone) or rfq.origin
+    volume = _weight(rfq.volume_m3) if rfq.volume_m3 is not None else None
+    mail = replies.pickup_enquiry(
+        rfq.pickup_zone, airport, _weight(rfq.weight_kg), volume, str(rfq.id)[:13]
+    )
+    asked = []
+    for name, email in truckers:
+        intent, created = outbound(
+            db, rfq, f"enquiry:{rfq.id}:{email}"[:128], "reply", None, mail, to=email
+        )
+        asked += [name] if created else []
+        try:
+            send(db, intent)
+        except DomainError:
+            continue  # the outbox recorded why; the other truckers are still asked
+    session.stage = "pricing"
+    session.exception = WAITING_FOR_PICKUP
+    if asked:
+        repositories.append_event(
+            db,
+            session.id,
+            "carrier_enquiry_sent",
+            {"kind": "pickup", "zone": rfq.pickup_zone, "carriers": asked, "simulated": True},
+        )
+    return True
+
+
+def close_overdue_sourcing(db: Session, margin: timedelta = timedelta(seconds=60)) -> int:
+    """Tell the customer when no trucker answered in time. Returns how many still wait."""
+    waiting = 0
+    for session in db.scalars(
+        select(SessionRow).where(SessionRow.exception == WAITING_FOR_PICKUP)
+    ).all():
+        rfq = db.get(RfqRow, session.rfq_id)
+        if rfq is None or rfq.status != "pending":
+            continue
+        if clock.now() < _aware(rfq.expires_at) - margin:
+            waiting += 1
+            continue
+        root = db.get(MessageRow, rfq.message_id)
+        _fail(db, session, rfq, "no_carrier_reply")
+        mail = replies.no_offer(
+            customer_name(root),
+            root.subject,
+            rfq.origin,
+            rfq.destination,
+            "no trucker has confirmed a pickup price in time",
+        )
+        intent, _ = outbound(
+            db, rfq, f"reply:{rfq.id}:no_offer", "reply", latest_customer_mail(db, root), mail
+        )
+        try:
+            send(db, intent)
+        except DomainError:
+            pass
+    return waiting
 
 
 def _clarify(db, session, rfq, root, mail: dict, asked: list[str], found: dict) -> SessionRow:

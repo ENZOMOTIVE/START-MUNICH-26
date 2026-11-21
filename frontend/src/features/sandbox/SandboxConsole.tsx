@@ -13,6 +13,7 @@ export function SandboxConsole() {
   const [scenarios, setScenarios] = useState<SandboxScenario[]>([]);
   const [scenario, setScenario] = useState("happy_path");
   const [seed, setSeed] = useState(42);
+  const [until, setUntil] = useState("");
   const [result, setResult] = useState<SandboxResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -27,7 +28,7 @@ export function SandboxConsole() {
     setBusy(true);
     setError("");
     try {
-      setResult(await runSandboxScenario(scenario, seed));
+      setResult(await runSandboxScenario(scenario, seed, until === "" ? null : Number(until)));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -72,6 +73,15 @@ export function SandboxConsole() {
             type="number"
             value={seed}
             onChange={(event) => setSeed(Number(event.target.value))}
+          />
+        </label>
+        <label>
+          Stop at simulated second (blank = run to the end)
+          <input
+            type="number"
+            min={0}
+            value={until}
+            onChange={(event) => setUntil(event.target.value)}
           />
         </label>
         <button className="btn btn-primary" type="submit" disabled={busy || scenarios.length === 0}>

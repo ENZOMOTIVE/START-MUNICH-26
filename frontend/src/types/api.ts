@@ -106,6 +106,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Session Events
+         * @description Server-sent events for one session's timeline.
+         *
+         *     The event id is the event's position in the timeline, so a client that reconnects with
+         *     Last-Event-ID (or `after`) gets exactly the events it has not seen, once.
+         */
+        get: operations["stream_session_events_api_sessions__session_id__stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/pause": {
         parameters: {
             query?: never;
@@ -134,6 +157,48 @@ export interface paths {
         put?: never;
         /** Resume */
         post: operations["resume_api_sessions__session_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Usage
+         * @description Model gateway calls by model and cost kind. A cost is shown only where one was
+         *     observed or estimated; `unknown` means the call was counted and its cost is not known.
+         */
+        get: operations["usage_api_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Review
+         * @description Everything that waits for a person: blocked sessions, mail that matched no shipment,
+         *     and tariff files that differ from the approved ones.
+         */
+        get: operations["review_api_review_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -641,10 +706,48 @@ export interface operations {
             };
         };
     };
+    stream_session_events_api_sessions__session_id__stream_get: {
+        parameters: {
+            query?: {
+                follow?: boolean;
+                after?: number;
+            };
+            header?: {
+                "last-event-id"?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     pause_api_sessions__session_id__pause_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-operator-token"?: string | null;
+            };
             path: {
                 session_id: string;
             };
@@ -675,7 +778,9 @@ export interface operations {
     resume_api_sessions__session_id__resume_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-operator-token"?: string | null;
+            };
             path: {
                 session_id: string;
             };
@@ -699,6 +804,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    usage_api_usage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    review_api_review_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

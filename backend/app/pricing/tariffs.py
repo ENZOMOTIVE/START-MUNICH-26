@@ -38,12 +38,13 @@ def candidate_row(c: RateCandidate) -> RateCandidateRow:
     )
 
 
-def load_fixture_candidates(db: Session, rfq: RfqRow) -> list[RateCandidateRow]:
+def load_fixture_candidates(db: Session, rfq: RfqRow, pickup=None) -> list[RateCandidateRow]:
+    """`pickup` is a trucker's PickupQuote for a door pickup (not used by demo fixtures)."""
     existing = candidates_for(db, rfq.id)
     if existing:
         return existing
     priced = build_rate_candidates(
-        rfq, portal_factory=get_adapters().get("rates"), now=clock.now()
+        rfq, portal_factory=get_adapters().get("rates"), now=clock.now(), pickup=pickup
     )
     rows = [candidate_row(c) for c in priced]
     for row in rows:

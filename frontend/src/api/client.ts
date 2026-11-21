@@ -14,6 +14,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: {
       Accept: "application/json",
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      // Set once in the browser console: localStorage.setItem("operator_token", "<token>")
+      ...(localStorage.getItem("operator_token")
+        ? { "X-Operator-Token": localStorage.getItem("operator_token") as string }
+        : {}),
       ...init?.headers,
     },
   });
@@ -83,8 +87,13 @@ export function listSandboxScenarios(): Promise<SandboxScenario[]> {
   return request("/sandbox/scenarios");
 }
 
-export function runSandboxScenario(scenario: string, seed: number): Promise<SandboxResult> {
-  return request("/sandbox/run", { method: "POST", body: JSON.stringify({ scenario, seed }) });
+export function runSandboxScenario(
+  scenario: string,
+  seed: number,
+  untilS: number | null,
+): Promise<SandboxResult> {
+  const body = JSON.stringify({ scenario, seed, until_s: untilS });
+  return request("/sandbox/run", { method: "POST", body });
 }
 
 export async function runDemo(): Promise<{ id: string }> {

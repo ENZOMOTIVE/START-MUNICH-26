@@ -39,19 +39,26 @@ from app.platform.mailbox import (
     map_poll_item,
     poll_mailbox_once,
 )
-from app.platform.outbox import expire_stale_sends
+from app.platform.outbox import deliver_pending, expire_stale_sends
 from app.platform.router import route_message
 from app.sandbox.scenarios import SCENARIOS
 from app.sandbox.world import _PRICE, World, adapters
 from app.workflows.booking import retry_open_bookings
+from app.workflows.rfq import close_overdue_sourcing
 
-RETRYABLE = {"session_paused", "send_failed", "send_in_progress", "concurrent_conflict"}
+RETRYABLE = {
+    "session_paused",
+    "send_failed",
+    "send_in_progress",
+    "send_throttled",
+    "concurrent_conflict",
+}
 MAX_ATTEMPTS = 80
 _lock = threading.Lock()
 _STATUS = re.compile(r"update for booking \S+ is: (.+?) \(reported")
 
 
-def run(scenario_id: str, seed: int | None = None) -> dict:
+def run(scenario_id: str, seed: int | None = None, until_s: int | None = None) -> dict:
     scenario = SCENARIOS[scenario_id]
     seed = get_settings().simulation_seed if seed is None else seed
     factory = get_session_factory()
@@ -63,14 +70,14 @@ def run(scenario_id: str, seed: int | None = None) -> dict:
         clock.set_clock(world.tick)
         started = time.perf_counter()
         try:
-            state = _drive(world, factory)
+            state = _drive(world, factory, until_s)
         finally:
             registry.set_adapters(None)
             clock.set_clock(None)
         return _report(world, factory, state, time.perf_counter() - started)
 
 
-def _drive(world: World, factory) -> dict:
+def _drive(world: World, factory, until_s: int | None = None) -> dict:
     mailbox = registry.get_adapters()["mailbox"]
     state = {"todo": [], "waiting": [], "errors": [], "duplicates": 0, "special": set()}
     actions = sorted(world.scenario.get("actions", []), key=lambda a: a["at"])
@@ -82,21 +89,29 @@ def _drive(world: World, factory) -> dict:
         while actions and actions[0]["at"] <= world.elapsed():
             _act(world, factory, actions.pop(0))
         with factory() as db:
+            roots = [str(r["root"]) for r in world.requests.values()]
             retry_open_bookings(db)
             expire_stale_sends(db)
+            deliver_pending(db, mailbox, roots)
+            waiting = close_overdue_sourcing(db)
             db.commit()
-            roots = [str(r["root"]) for r in world.requests.values()]
             sending = db.scalars(
                 select(ActionIntentRow.id).where(
-                    ActionIntentRow.delivery_status == "sending",
+                    ActionIntentRow.delivery_status.in_(("sending", "pending")),
+                    ActionIntentRow.payload.has_key("body"),  # noqa: W601 - JSONB key test
                     ActionIntentRow.kind != "booking",
                     ActionIntentRow.payload["thread_id"].astext.in_(roots),
                 )
             ).first()
         # Keep simulated time moving until every send of this run has a recorded outcome.
-        if not (world.queue or state["todo"] or state["waiting"] or actions or sending):
+        busy = world.queue or state["todo"] or state["waiting"] or actions or sending or waiting
+        if not busy:
             break
-        world.advance(world.start + timedelta(seconds=actions[0]["at"]) if actions else None)
+        stops = [actions[0]["at"]] if actions else []
+        stops += [until_s] if until_s is not None else []
+        world.advance(world.start + timedelta(seconds=min(stops)) if stops else None)
+        if until_s is not None and world.elapsed() >= until_s:
+            break  # stopped part-way on request: mail due from here on is not delivered
     return state
 
 
@@ -204,9 +219,9 @@ def _report(world: World, factory, state: dict, wall: float) -> dict:
     secret = get_settings().hackathon_api_key
     with factory() as db:
         inbox_ids = [str(m["id"]) for m in world.inbox]
-        totals["mails_stored"] = len(
-            db.scalars(select(MessageRow.id).where(MessageRow.external_id.in_(inbox_ids))).all()
-        )
+        stored = db.scalars(select(MessageRow).where(MessageRow.external_id.in_(inbox_ids))).all()
+        totals["mails_stored"] = len(stored)
+        tariff_mail = [m.raw for m in stored if isinstance(m.raw, dict) and "tariff" in m.raw]
         for key, req in world.requests.items():
             message = db.scalars(
                 select(MessageRow).where(MessageRow.external_id == str(req["root"]))
@@ -322,6 +337,10 @@ def _report(world: World, factory, state: dict, wall: float) -> dict:
                 reasons.append(req["reason"])
     totals.update(
         stray_outbound=len(world.stray),
+        carrier_mails_sent=len(world.carrier_mail),
+        tariffs_for_review=sum(
+            1 for m in tariff_mail if m["tariff"]["status"] == "review_required"
+        ),
         secrets_in_outbound=sum(
             1
             for s in world.sent
@@ -364,8 +383,8 @@ def _report(world: World, factory, state: dict, wall: float) -> dict:
                 {
                     "check": f"always.{name}",
                     "expected": 0,
-                    "actual": totals[name],
-                    "passed": totals[name] == 0,
+                    "actual": totals.get(name, 0),
+                    "passed": totals.get(name, 0) == 0,
                 }
             )
     logical = json.dumps({"requests": requests, "totals": totals}, sort_keys=True, default=str)

@@ -25,6 +25,7 @@ from app.db.models import (
 )
 from app.platform import get_adapters
 from app.platform.booking import BookingRejected, BookingUnknown
+from app.platform.carriers import load_carriers
 from app.workflows import replies
 from app.workflows import rfq as rfq_flow
 
@@ -50,24 +51,6 @@ def handle_acceptance(db: Session, message: MessageRow) -> SessionRow | None:
         candidate = db.get(RateCandidateRow, quote.candidate_id)
         if candidate is None:
             raise DomainError("quoted_candidate_required")
-        if not candidate.rate_id:
-            # Accepted, but the offer has no portal rate to book: a person must book it.
-            if session.exception != "manual_booking_required":
-                session.stage = "accepted"
-                rfq.status = "accepted"
-                session.exception = "manual_booking_required"
-                repositories.append_event(
-                    db,
-                    session.id,
-                    "customer_accepted",
-                    {
-                        "message_external_id": message.external_id,
-                        "quote_decision_id": str(quote.id),
-                        "blocked": "manual_booking_required",
-                        "simulated": True,
-                    },
-                )
-            return session
 
     if session.stage not in {"accepted", "booked"} and existing_booking is None:
         session.stage = "accepted"
@@ -99,8 +82,6 @@ def confirm_booking(db: Session, session: SessionRow) -> BookingRow:
     if booking is None:
         if candidate is None:
             raise DomainError("quoted_candidate_required")
-        if not candidate.rate_id:
-            raise DomainError("rate_id_required")
         booking = BookingRow(
             rfq_id=session.rfq_id,
             quote_id=quote.id,
@@ -121,8 +102,10 @@ def confirm_booking(db: Session, session: SessionRow) -> BookingRow:
             if booking is None:
                 raise
 
-    if booking.status in OPEN:
+    if booking.status in OPEN and booking.rate_id:
         _submit(db, session, booking)
+    elif booking.status in OPEN:
+        _book_by_mail(db, session, rfq, booking, candidate)
     if booking.status == "confirmed":
         session.stage = "booked"
         rfq.status = "booked"
@@ -179,6 +162,44 @@ def _submit(db: Session, session: SessionRow, booking: BookingRow) -> None:
         _booking_event(db, session, booking, "booking_confirmed", "portal")
 
 
+def _book_by_mail(db, session, rfq: RfqRow, booking: BookingRow, candidate) -> None:
+    """An offer with no portal rate is booked by writing to the airline. It stays `submitted`
+    until the airline's "Booking <reference> confirmed" mail arrives."""
+    airline = next(
+        (
+            c
+            for c in load_carriers().values()
+            if candidate is not None and c.kind == "airline" and c.name == candidate.carrier
+        ),
+        None,
+    )
+    if airline is None:
+        booking.status = "failed"
+        session.exception = "manual_booking_required"
+        _booking_event(db, session, booking, "booking_failed", "no address for this carrier")
+        return
+    if db.scalar(select(SessionRow.paused).where(SessionRow.id == session.id)):
+        raise DomainError("session_paused")
+    mail = replies.carrier_booking_request(
+        rfq.origin,
+        rfq.destination,
+        rfq_flow._weight(rfq.weight_kg),
+        str(booking.total),
+        booking.currency,
+        booking.team_reference,
+    )
+    intent, created = rfq_flow.outbound(
+        db, rfq, f"bookreq:{rfq.id}", "reply", None, mail, "accepted", to=airline.email
+    )
+    if created:
+        booking.status = "submitted"
+        _booking_event(db, session, booking, "booking_submitted", f"by mail to {airline.name}")
+    try:
+        rfq_flow.send(db, intent)
+    except DomainError as exc:
+        log.warning("booking request not sent for %s: %s", booking.team_reference, exc.code)
+
+
 def _booking_event(db, session, booking: BookingRow, event: str, detail: str) -> None:
     repositories.append_event(
         db,
@@ -200,11 +221,20 @@ def _booking_event(db, session, booking: BookingRow, event: str, detail: str) ->
 
 def _notify(db, session, rfq: RfqRow, booking: BookingRow, candidate) -> None:
     """Tell the customer the true booking state, once per state."""
-    if booking.status not in {"confirmed", "submitted", "UNKNOWN"}:
+    if booking.status not in {"confirmed", "submitted", "UNKNOWN", "failed"}:
         return
     root = db.get(MessageRow, rfq.message_id)
     name, carrier = rfq_flow.customer_name(root), candidate.carrier if candidate else "the carrier"
-    if booking.status == "confirmed":
+    if booking.status == "failed":
+        state = "failed"
+        events = repositories.events_for(db, session.id)
+        failures = [e.payload["detail"] for e in events if e.type == "booking_failed"]
+        detail = failures[-1] if failures else ""
+        reason = "the carrier's booking system refused it"
+        if "410" in detail:
+            reason = "the rate expired before I could book it"
+        mail = replies.booking_failed(name, root.subject, carrier, reason)
+    elif booking.status == "confirmed":
         state = "confirmed"
         mail = replies.booking_confirmed(
             name,

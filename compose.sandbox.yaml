@@ -2,9 +2,8 @@
 # `make sandbox-up`. It never reads `.env`; all values below are synthetic.
 #
 # Egress: the application refuses live URLs at start-up and installs a socket guard in the API
-# and the worker. On top of that the worker and the database sit on an internal Docker network
-# with no route out. The API needs a published port, so it is also on `edge`; for the API the
-# in-process guard is the egress control.
+# and the worker. On top of that the API and the worker sit only on an internal Docker network
+# with no route out. Port 8100 is published by a small forwarder (`gateway`) instead.
 name: fiveu-sandbox
 
 x-sandbox-env: &sandbox-env
@@ -47,11 +46,9 @@ services:
       - -c
       - alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000
     environment: *sandbox-env
-    ports:
-      - "127.0.0.1:8100:8000"
     volumes:
       - ./fixtures:/fixtures:ro
-    networks: [internal, edge]
+    networks: [internal]
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,6 +59,18 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  # The only container with a published port. It forwards 127.0.0.1:8100 to the API and holds
+  # no application code, so the API itself can stay on the network that has no route out.
+  gateway:
+    image: alpine/socat:1.8.0.3
+    command: ["tcp-listen:8000,fork,reuseaddr", "tcp-connect:api:8000"]
+    ports:
+      - "127.0.0.1:8100:8000"
+    networks: [internal, edge]
+    depends_on:
+      api:
+        condition: service_healthy
 
   worker:
     build:

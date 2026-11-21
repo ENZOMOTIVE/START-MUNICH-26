@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     mailbox_poll_seconds: float = 1.5
     router_backend: Literal["keyword", "gateway"] = "keyword"
     router_model: str = "gpt-4.1-mini"
+    # The mailbox allows 60 mails a minute per team key; stay under it (live sends only).
+    send_min_interval_ms: int = 1100
+    # When set, pause, resume and sandbox runs need the header X-Operator-Token.
+    operator_token: str = ""
 
     @model_validator(mode="after")
     def _sandbox_fails_closed(self):
