@@ -66,6 +66,7 @@ def deliver_intent(
         return intent
     if intent.delivery_status == "observed":
         raise DomainError("observation_only", "a proposal from observation mode is never sent")
+    runlimits.require_running(db)  # the global stop, for the agents and for an operator
     not_before = (intent.payload or {}).get("_not_before")
     if not_before and clock.now() < datetime.fromisoformat(not_before):
         raise DomainError("send_throttled")  # the mailbox said when to come back (Retry-After)

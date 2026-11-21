@@ -52,13 +52,19 @@ def spend(db: Session, name: str, limit: int | None = None, amount: int = 1) -> 
         raise DomainError("run_budget_exhausted", f"{name}: limit {limit} reached")
 
 
+def require_running(db: Session) -> None:
+    """Refuse while the global stop is set. Checked before every mail send, booking and paid
+    model call, whatever RUN_LIMITS says."""
+    if _value(db, "stopped"):  # 0 after a resume
+        raise DomainError("run_stopped", "outbound actions are stopped (POST /api/run/resume)")
+
+
 def admit(db: Session, thread_id: str) -> None:
     """Put a customer thread on the allowlist. The first admission starts the run's clock."""
     settings = get_settings()
+    require_running(db)
     if not settings.run_limits or _value(db, f"admitted:{thread_id}") is not None:
         return
-    if _value(db, "stopped") is not None:
-        raise DomainError("run_stopped", "this run was stopped; nothing more is admitted")
     started = _value(db, "started_ms")
     if started is not None and _now_ms() >= started + settings.run_minutes * 60_000:
         raise DomainError("run_closed", "the admission window of this run has ended")
@@ -72,10 +78,9 @@ def admit(db: Session, thread_id: str) -> None:
 def require_admitted(db: Session, thread_id: str) -> None:
     """Refuse any external action for a thread that is not on this run's allowlist."""
     settings = get_settings()
+    require_running(db)
     if not settings.run_limits:
         return
-    if _value(db, "stopped") is not None:
-        raise DomainError("run_stopped", "this run's outbound actions are stopped")
     if _value(db, f"admitted:{thread_id}") is None:
         raise DomainError("not_admitted", f"thread {thread_id} is not admitted to this run")
     window = timedelta(minutes=settings.run_minutes) + GRACE
@@ -85,8 +90,19 @@ def require_admitted(db: Session, thread_id: str) -> None:
 
 def stop(db: Session) -> None:
     """Stop every outbound action of this run. Pending work stays where it is."""
-    if _value(db, "stopped") is None:
+    row = db.get(MailboxCursorRow, _key("stopped"))
+    if row is None:
         db.add(MailboxCursorRow(name=_key("stopped"), since_id=_now_ms()))
+    elif not row.since_id:
+        row.since_id = _now_ms()
+    db.flush()
+
+
+def resume(db: Session) -> None:
+    """Lift the stop. Work that was held back by it goes on; nothing is replayed blindly."""
+    row = db.get(MailboxCursorRow, _key("stopped"))
+    if row is not None:
+        row.since_id = 0
         db.flush()
 
 
@@ -114,7 +130,7 @@ def status(db: Session) -> dict:
     return {
         "enabled": settings.run_limits,
         "started_ms": values.get("started_ms"),
-        "stopped_ms": values.get("stopped"),
+        "stopped_ms": values.get("stopped") or None,
         "minutes": settings.run_minutes,
         "admitted_threads": sorted(k[9:] for k in values if k.startswith("admitted:")),
         "used": {name: values.get(name, 0) for name in COUNTERS},

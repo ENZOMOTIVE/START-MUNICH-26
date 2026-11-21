@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from app.contracts.models import ServiceIntent
 from app.core import clock
 from app.core.errors import DomainError
+from app.platform.carriers import load_carriers
 from app.pricing.calculator import select_offer
 
 
@@ -45,10 +46,11 @@ def choose_offer_with_evidence(candidates, service_intent, *, now: datetime | No
     if complete and not current:
         raise DomainError("offers_expired")
 
-    # Quote what can be booked: an offer without a portal rate_id is only used when nothing
-    # bookable exists (booking it then needs a person; email booking is not built).
-    bookable = [candidate for candidate in current if candidate.rate_id]
-    unbookable = {str(c.id) for c in current if not c.rate_id} if bookable else set()
+    # Quote what can be booked: through the portal (a rate_id) or by mail to a listed airline.
+    # Both compete on price and transit; only an offer with neither route stands back.
+    by_mail = {c.name for c in load_carriers().values() if c.kind == "airline"}
+    bookable = [c for c in current if c.rate_id or c.carrier in by_mail]
+    unbookable = {str(c.id) for c in current if c not in bookable} if bookable else set()
     current = bookable or current
     selected = select_offer(current, intent)
     missing_transit = (

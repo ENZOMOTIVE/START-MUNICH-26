@@ -367,8 +367,13 @@ def assess_dg(mails: list[tuple[str, list[dict]]]) -> dict:
     for item in evidence:
         if item.get("readable") and not item.get("says_not_regulated"):
             signals += [un for un in item.get("un_numbers") or [] if un not in signals]
-    required = documents.required_documents(documents.un_numbers(" ".join(signals)))
+    named = documents.un_numbers(" ".join(signals))
+    required = documents.required_documents(named)
     missing = [kind for kind in required if kind not in docs]
+    # A declaration covers the UN numbers it names, not the other goods in the shipment.
+    uncovered = [un for un in named if un not in declared_by_document] if "dgd" in docs else []
+    if uncovered and "dgd" in required:
+        missing = ["dgd", *[kind for kind in missing if kind != "dgd"]]
     contradicted = any(r["problem"] == "contradicts_email" for r in rejected)
     if not signals:
         status = "none"
@@ -388,6 +393,7 @@ def assess_dg(mails: list[tuple[str, list[dict]]]) -> dict:
         "declared_non_dangerous": negated_first,
         "docs_present": sorted(docs),
         "docs_missing": missing if signals else [],
+        "uncovered_un_numbers": uncovered,
         "unreadable_attachments": unreadable,
         "rejected_documents": rejected,
         "documents": evidence,

@@ -2,15 +2,22 @@ import importlib
 from collections.abc import Callable
 from uuid import UUID
 
-from sqlalchemy import exists, select
+from sqlalchemy import String, cast, exists, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.errors import NotFoundError
 from app.db import repositories
-from app.db.models import MessageRow
+from app.db.models import MessageRow, RfqRow
 from app.platform.decisions import ReplyJudge, get_reply_judge
-from app.platform.routing import AGENT_FOR_KIND, KINDS, MailFacts, RoutingDecision, decide
+from app.platform.routing import (
+    AGENT_FOR_KIND,
+    ENQUIRY_REF,
+    KINDS,
+    MailFacts,
+    RoutingDecision,
+    decide,
+)
 
 # Handler contract: handler(db, message) runs inside the routing job's transaction, must be
 # safe to run twice for the same mail, and signals failure by raising. To attach an agent,
@@ -72,7 +79,12 @@ def mail_facts(db: Session, message: MessageRow) -> MailFacts:
     quote = None
     if session is not None and session.stage == "quoted":
         quote = repositories.quote_for(db, session.rfq_id)
+    reference = ENQUIRY_REF.search(message.subject or "")
+    asked = reference is not None and db.scalar(
+        select(exists().where(cast(RfqRow.id, String).like(f"{reference.group(1)}%")))
+    )
     return MailFacts(
+        answers_enquiry=bool(asked),
         sender=message.sender or "",
         subject=message.subject or "",
         body=message.body or "",
