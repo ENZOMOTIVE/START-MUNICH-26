@@ -1,44 +1,62 @@
 {
+  "comment": "Hand-checked demo fixtures, NOT live tariff parses. Totals per docs/tasks/T2.md. Only the Yellowtail breakdown is specified there; the Helix/Vega breakdowns were chosen to sum exactly to their specified totals (same 29.75 pickup leg, zone 60 -> FRA).",
   "source_ref": "fixtures/rates/demo-fra-lax.json",
   "source_version": "demo-2026-11",
+  "simulated": true,
+  "match": {
+    "origin": "FRA",
+    "destination": "LAX",
+    "weight_kg": "250",
+    "pickup_zone": "60",
+    "service_intent": "cheapest"
+  },
   "candidates": [
     {
       "carrier": "Yellowtail Air Freight",
       "carrier_code": "YT",
-      "total": "1250.00",
+      "total": "412.50",
       "currency": "EUR",
       "transit_days": 5,
-      "rate_id": "YT-FRA-LAX-001",
+      "rate_id": "R-DEMOYELLOW01",
+      "valid_until": "2027-01-01T00:00:00Z",
       "complete": true,
       "charges": [
-        {"code": "FREIGHT", "amount": "1100.00", "currency": "EUR", "unit": "shipment"},
-        {"code": "FUEL", "amount": "150.00", "currency": "EUR", "unit": "shipment"}
+        {"code": "air_freight", "amount": "350.00", "currency": "EUR", "unit": "shipment"},
+        {"code": "fuel", "amount": "29.25", "currency": "EUR", "unit": "shipment"},
+        {"code": "security", "amount": "3.50", "currency": "EUR", "unit": "shipment"},
+        {"code": "pickup", "amount": "29.75", "currency": "EUR", "unit": "shipment"}
       ]
     },
     {
       "carrier": "Helix Air Freight",
       "carrier_code": "HX",
-      "total": "1580.00",
+      "total": "520.00",
       "currency": "EUR",
       "transit_days": 3,
-      "rate_id": "HX-FRA-LAX-001",
+      "rate_id": "R-DEMOHELIX0001",
+      "valid_until": "2027-01-01T00:00:00Z",
       "complete": true,
       "charges": [
-        {"code": "FREIGHT", "amount": "1400.00", "currency": "EUR", "unit": "shipment"},
-        {"code": "FUEL", "amount": "180.00", "currency": "EUR", "unit": "shipment"}
+        {"code": "air_freight", "amount": "455.00", "currency": "EUR", "unit": "shipment"},
+        {"code": "fuel", "amount": "31.75", "currency": "EUR", "unit": "shipment"},
+        {"code": "security", "amount": "3.50", "currency": "EUR", "unit": "shipment"},
+        {"code": "pickup", "amount": "29.75", "currency": "EUR", "unit": "shipment"}
       ]
     },
     {
-      "carrier": "Gannet Airways",
-      "carrier_code": "GN",
-      "total": "1420.00",
+      "carrier": "Vega Skyfreight",
+      "carrier_code": "VG",
+      "total": "480.00",
       "currency": "EUR",
       "transit_days": 4,
-      "rate_id": "GN-FRA-LAX-001",
+      "rate_id": "R-DEMOVEGA000001",
+      "valid_until": "2027-01-01T00:00:00Z",
       "complete": true,
       "charges": [
-        {"code": "FREIGHT", "amount": "1280.00", "currency": "EUR", "unit": "shipment"},
-        {"code": "FUEL", "amount": "140.00", "currency": "EUR", "unit": "shipment"}
+        {"code": "air_freight", "amount": "415.00", "currency": "EUR", "unit": "shipment"},
+        {"code": "fuel", "amount": "31.75", "currency": "EUR", "unit": "shipment"},
+        {"code": "security", "amount": "3.50", "currency": "EUR", "unit": "shipment"},
+        {"code": "pickup", "amount": "29.75", "currency": "EUR", "unit": "shipment"}
       ]
     }
   ]
