@@ -92,6 +92,7 @@ def final_quote(
     charge_codes: list[str],
     valid_until: datetime | None,
     pickup_zone=None,
+    pickup_reference=None,
 ) -> dict:
     included = [c.replace("_", " ") for c in charge_codes]
     transit = "transit time not confirmed"
@@ -101,7 +102,8 @@ def final_quote(
     if included:
         lines.append(f"Included: {_join(included)}")
     if pickup_zone:
-        lines.append(f"Pickup: from zone {pickup_zone}")
+        offer = f" (trucker offer {pickup_reference})" if pickup_reference else ""
+        lines.append(f"Pickup: from zone {pickup_zone}{offer}")
     if valid_until is not None:
         lines.append(f"Valid until: {_when(valid_until)}")
     return _mail(

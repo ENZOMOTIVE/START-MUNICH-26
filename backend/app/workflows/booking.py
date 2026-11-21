@@ -8,12 +8,14 @@ is the retry the booking contract defines. Emails never get that treatment.
 
 import logging
 import re
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core import clock
 from app.core.config import get_settings
 from app.core.errors import DomainError
 from app.db import repositories
@@ -31,13 +33,13 @@ from app.platform.carriers import load_carriers
 from app.platform.decisions import reply_text
 from app.workflows import replies
 from app.workflows import rfq as rfq_flow
-from app.workflows.extract import airports
+from app.workflows.extract import _decimal, airports
 
 log = logging.getLogger(__name__)
 OPEN = ("pending", "submitted", "UNKNOWN")
 ACCEPTANCE_HELD = "acceptance_needs_review"
 _MONEY = re.compile(
-    r"(EUR|USD|€|\$)\s?(\d[\d,]*(?:\.\d{1,2})?)|(\d[\d,]*(?:\.\d{1,2})?)\s?(EUR|USD|€)",
+    r"(EUR|USD|€|\$)\s?(\d[\d.,]*\d|\d)|(\d[\d.,]*\d|\d)\s?(EUR|USD|€)",
     re.IGNORECASE,
 )
 _CODE = re.compile(r"\b[A-Z]{3}\b")
@@ -109,7 +111,7 @@ def acceptance_problem(text, total, currency: str, origin: str, destination: str
     """
     for match in _MONEY.finditer(text):
         symbol = (match.group(1) or match.group(4) or "").upper()
-        amount = Decimal((match.group(2) or match.group(3)).replace(",", ""))
+        amount = _decimal(match.group(2) or match.group(3))  # None: readable in two ways
         named = {"€": "EUR", "$": "USD"}.get(symbol, symbol)
         if amount != Decimal(total) or named != currency:
             return "amount_differs_from_quote"
@@ -181,11 +183,14 @@ def confirm_booking(db: Session, session: SessionRow) -> BookingRow:
             if booking is None:
                 raise
 
+    retry = _retry_state(db, booking)
     if booking.status in OPEN and booking.rate_id:
         # Once the portal has given a reference it has answered: only the airline's
         # confirmation mail moves the booking on, so the request is not posted again.
-        if not booking.booking_reference:
-            _submit(db, session, booking)
+        # A failed call waits for its stored retry time, which a restart does not lose.
+        due = not retry.get("retry_at") or clock.now() >= datetime.fromisoformat(retry["retry_at"])
+        if not booking.booking_reference and due:
+            retry = _submit(db, session, booking) or retry
     elif booking.status in OPEN:
         _book_by_mail(db, session, rfq, booking, candidate)
     if booking.status == "confirmed":
@@ -193,13 +198,21 @@ def confirm_booking(db: Session, session: SessionRow) -> BookingRow:
         rfq.status = "booked"
         if session.exception in {"booking_unknown", "send_unknown"}:
             session.exception = None
-    _ensure_booking_intent(db, rfq.id, booking, quote.id)
+    _ensure_booking_intent(db, rfq.id, booking, quote.id, retry)
     _notify(db, session, rfq, booking, candidate)
     db.flush()
     return booking
 
 
-def _submit(db: Session, session: SessionRow, booking: BookingRow) -> None:
+def _retry_state(db: Session, booking: BookingRow) -> dict:
+    """Attempts made and the time of the next one, kept on the booking's action."""
+    intent = repositories.action_intent_by_key(db, f"book:{booking.rfq_id}")
+    payload = (intent.payload if intent is not None else None) or {}
+    return {key: payload[key] for key in ("attempts", "retry_at") if key in payload}
+
+
+def _submit(db: Session, session: SessionRow, booking: BookingRow) -> dict | None:
+    """Post the booking. Returns the retry schedule when the outcome is not known."""
     adapter = get_adapters().get("booking")
     if adapter is None:
         # Demo mode has no portal: the booking is simulated and labelled as such.
@@ -234,14 +247,22 @@ def _submit(db: Session, session: SessionRow, booking: BookingRow) -> None:
         except BookingUnknown as exc:
             booking.status = "UNKNOWN"
             session.exception = "booking_unknown"
-            _booking_event(db, session, booking, "booking_unknown", str(exc))
-            return
+            # The identical (rate_id, team_reference) pair is sent again; the portal answers a
+            # repeat with the booking it already has. Wait as long as the portal asked
+            # (Retry-After), else 10, 20, 40 ... seconds, at most five minutes.
+            attempts = _retry_state(db, booking).get("attempts", 0) + 1
+            wait = getattr(exc, "retry_after", None) or min(300, 5 * 2**attempts)
+            again = clock.now() + timedelta(seconds=wait)
+            _booking_event(
+                db, session, booking, "booking_unknown", f"{exc}; next attempt in {wait:g}s"
+            )
+            return {"attempts": attempts, "retry_at": again.isoformat()}
         except BookingRejected as exc:
             booking.status = "failed"
             session.exception = "booking_failed"
             session.stage = "exception"
             _booking_event(db, session, booking, "booking_failed", str(exc))
-            return
+            return None
     booking.booking_reference = result["booking_reference"]
     booking.status = result["status"]
     booking.simulated = bool(result.get("simulated")) or not get_settings().live_allowed()
@@ -368,11 +389,14 @@ def retry_open_bookings(db: Session) -> int:
     return len(rows)
 
 
-def _ensure_booking_intent(db: Session, rfq_id, booking: BookingRow, quote_id) -> ActionIntentRow:
+def _ensure_booking_intent(
+    db: Session, rfq_id, booking: BookingRow, quote_id, retry: dict | None = None
+) -> ActionIntentRow:
     action_key = f"book:{rfq_id}"
     intent = repositories.action_intent_by_key(db, action_key)
     confirmed = booking.status == "confirmed"
     payload = {
+        **(retry or {}),
         "simulated": bool(booking.simulated),
         "quote_id": str(quote_id),
         "rate_id": booking.rate_id,
