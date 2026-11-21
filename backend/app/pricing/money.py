@@ -119,7 +119,8 @@ def volume_from_dims(length, width, height, unit: str = "cm", pieces: int = 1) -
 
 
 def chargeable_weight(gross_kg, volume_m3=0, divisor=167) -> Decimal:
-    """max(gross_kg, volume_m3 x divisor). Divisor in kg per m3 (167 unless a tariff states otherwise)."""
+    """max(gross_kg, volume_m3 x divisor). Divisor in kg per m3 (167 unless a tariff states
+    otherwise)."""
     return max(D(gross_kg), D(volume_m3 or 0) * D(divisor))
 
 

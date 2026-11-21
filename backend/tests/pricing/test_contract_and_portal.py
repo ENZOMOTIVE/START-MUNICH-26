@@ -1,4 +1,5 @@
-"""Engine/portal output mapped onto the team RateCandidate contract; LivePortal is GET-only and gated."""
+"""Engine/portal output mapped onto the team RateCandidate contract; LivePortal is GET-only and
+gated."""
 
 import datetime as dt
 import os

@@ -1,7 +1,10 @@
-"""Pickup leg: 2-digit German postcode zone -> origin airport (pickup_zones.csv), and the truck charge.
+"""Pickup leg: 2-digit German postcode zone -> origin airport (pickup_zones.csv), and the truck
+charge.
 
-The truck price itself is NOT in any tariff: it comes from a trucker bid (T3 collects those by email) or a
-human. We never invent it: an RFQ that needs a pickup without a PickupQuote yields an incomplete candidate.
+The truck price itself is NOT in any tariff: it comes from a trucker bid (T3 collects those by
+email) or a
+human. We never invent it: an RFQ that needs a pickup without a PickupQuote yields an incomplete
+candidate.
 """
 
 from __future__ import annotations
@@ -20,7 +23,8 @@ from .quote_models import Evidence, PricedCharge, PricedOption
 
 @lru_cache
 def zones(kit: Path | None = None) -> dict[str, dict]:
-    """Zone table from starter-kit/pickup_zones.csv (read-only). Inside the api container starter-kit/ is
+    """Zone table from starter-kit/pickup_zones.csv (read-only). Inside the api container
+    starter-kit/ is
     not mounted, so fall back to the byte-identical copy bundled in app/pricing/data/."""
     path = (kit or config.KIT_DIR) / "pickup_zones.csv"
     if not path.is_file():

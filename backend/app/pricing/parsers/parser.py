@@ -1,14 +1,18 @@
 """Format-agnostic tariff row parser: list[Row] -> ParsedSet (values + per-field evidence).
 
 Layouts seen in the kit (all handled, anything else becomes a ReviewException):
-  * one table, lane in col 0: "CGN-SYD" | "CGN Cologne > EZE Buenos Aires" | "Cologne (CGN) to Lagos (LOS)"
+  * one table, lane in col 0: "CGN-SYD" | "CGN Cologne > EZE Buenos Aires" | "Cologne (CGN) to
+  Lagos (LOS)"
   * "Origin: XXX" sections with destination-only rows
-  * break headers "-45/+45/..." | "from 0 kg" | "0 kg+"; header may span two rows; several labels in one cell
-  * surcharges as table columns, as "lane: fuel X per kg, security Y per kg" lines, or a Lane/Fuel/Security table
+  * break headers "-45/+45/..." | "from 0 kg" | "0 kg+"; header may span two rows; several labels
+  in one cell
+  * surcharges as table columns, as "lane: fuel X per kg, security Y per kg" lines, or a
+  Lane/Fuel/Security table
   * block layout: lane header, then Transit / Minimum / from N kg / Fuel / Security lines
   * decimal comma or point, "EUR " prefixes, "D+4" / "2 days" transit
 
-Strictness: a data row must carry exactly the number of values its header promises, no blanks, every cell a
+Strictness: a data row must carry exactly the number of values its header promises, no blanks,
+every cell a
 clean number. Otherwise the row is not guessed at: it becomes a lane-scoped ReviewException.
 """
 
@@ -100,7 +104,8 @@ class _Ctx:
         )
 
     def put(self, lane, attr: str, value, row: Row, brk: int | None = None) -> None:
-        """Set a field; a conflicting second value for the same field is an ambiguity, not an overwrite."""
+        """Set a field; a conflicting second value for the same field is an ambiguity, not an
+        overwrite."""
         f = Field(value, self.ev(row))
         old = lane.breaks.get(brk) if brk is not None else getattr(lane, attr)
         if old is not None and old.value != value:

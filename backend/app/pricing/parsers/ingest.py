@@ -1,5 +1,7 @@
-"""Walk the kit, checksum + version every tariff set, read -> parse -> validate -> approved LaneRates or
-ReviewExceptions. No file is silently skipped: every file in the directory is accounted for in the report.
+"""Walk the kit, checksum + version every tariff set, read -> parse -> validate -> approved
+LaneRates or
+ReviewExceptions. No file is silently skipped: every file in the directory is accounted for in the
+report.
 
     python -m app.pricing.parsers.ingest [--kit DIR] [--store DIR] [--snapshot FILE] [--no-store]
 """
@@ -399,7 +401,8 @@ def ingest_group(set_id: str, paths: list[Path]) -> SetResult:
 
 
 def discover(kit: Path) -> tuple[dict[str, list[Path]], list[dict]]:
-    """-> ({set_id: files}, [ignored file notes]). Every file is either a tariff or explicitly listed."""
+    """-> ({set_id: files}, [ignored file notes]). Every file is either a tariff or explicitly
+    listed."""
     groups: dict[str, list[Path]] = defaultdict(list)
     other = []
     for p in sorted(kit.iterdir()):
@@ -439,7 +442,8 @@ def report(results: list[SetResult], other: list[dict]) -> str:
     for o in other:
         out.append(f"[other   ] {o['file']}: {o['role']}")
     out.append(
-        f"TOTAL approved lanes: {sum(len(r.records) for r in results)} across {len(results)} tariff sets, "
+        f"TOTAL approved lanes: {sum(len(r.records) for r in results)} "
+        f"across {len(results)} tariff sets, "
         f"{sum(len(r.files) for r in results)} files"
     )
     return "\n".join(out)

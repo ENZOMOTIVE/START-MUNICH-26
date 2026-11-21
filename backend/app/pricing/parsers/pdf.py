@@ -1,4 +1,5 @@
-"""PDF tariffs (cobalt-skylift, helix, orion): layout-preserving text, then 2+-space column split."""
+"""PDF tariffs (cobalt-skylift, helix, orion): layout-preserving text, then 2+-space column
+split."""
 
 from __future__ import annotations
 

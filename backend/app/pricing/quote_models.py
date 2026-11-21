@@ -1,4 +1,5 @@
-"""Contracts. PricedOption is the T2 -> T3 handoff: T3 quotes and books from it without re-deriving a price."""
+"""Contracts. PricedOption is the T2 -> T3 handoff: T3 quotes and books from it without re-deriving
+a price."""
 
 from __future__ import annotations
 
@@ -28,7 +29,8 @@ def _jsonable(v: Any) -> Any:
 
 @dataclass(frozen=True)
 class Evidence:
-    """Where a value came from. `locator` is file-format specific (line 12 / Sheet1!C5 / page 1 line 9 / ocr pass)."""
+    """Where a value came from. `locator` is file-format specific (line 12 / Sheet1!C5 / page 1
+    line 9 / ocr pass)."""
 
     source_file: str
     checksum: str | None = None

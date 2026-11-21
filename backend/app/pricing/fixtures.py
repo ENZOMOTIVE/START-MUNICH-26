@@ -1,6 +1,7 @@
 """Fixtures-first rate loader (the T2 demo path). Pure file reads: no DB, no network, no LLM.
 
-Reads every `FIXTURES_DIR/rates/*.json` (see fixtures/rates/demo-fra-lax.json) and turns the candidates of
+Reads every `FIXTURES_DIR/rates/*.json` (see fixtures/rates/demo-fra-lax.json) and turns the
+candidates of
 the file(s) whose `match` lane equals the RFQ lane into team `RateCandidate`s (simulated=True).
 
 A fixture candidate is only `complete` if it passes the same checks a real quote must pass:
@@ -71,7 +72,8 @@ def load_rate_fixtures(fixtures_dir: str | Path | None = None) -> list[RateFixtu
         cands = data.get("candidates", data if isinstance(data, list) else [])
         match = data.get("match") or {}
         if not match and cands:
-            # legacy fixture without a match block: derive the lane from the file name (demo-fra-lax)
+            # legacy fixture without a match block: derive the lane from the file name
+            # (demo-fra-lax)
             parts = path.stem.split("-")
             if len(parts) >= 3:
                 match = {"origin": parts[-2].upper(), "destination": parts[-1].upper()}
@@ -162,7 +164,8 @@ def fixture_item_to_contract(
 def candidates_from_fixtures(
     rfq: Any, *, fixtures_dir: str | Path | None = None, now: dt.datetime | None = None
 ) -> list[RateCandidate]:
-    """RFQ (contract RFQ, RfqRow or dict) -> RateCandidates from matching fixture files. [] if none match."""
+    """RFQ (contract RFQ, RfqRow or dict) -> RateCandidates from matching fixture files. [] if none
+    match."""
     now = now or dt.datetime.now(dt.UTC)
     origin = str(_get(rfq, "origin", "")).upper()
     destination = str(_get(rfq, "destination", "")).upper()

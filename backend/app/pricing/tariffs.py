@@ -1,6 +1,7 @@
 """DB glue used by app.workflows.rfq: persist T2 RateCandidates as `rate_candidates` rows.
 
-Kept under its scaffold name/signature (`load_fixture_candidates(db, rfq)`) so T1/T3 code does not change.
+Kept under its scaffold name/signature (`load_fixture_candidates(db, rfq)`) so T1/T3 code does not
+change.
 Fixtures are preferred (demo); see app.pricing.candidates for the live path.
 """
 

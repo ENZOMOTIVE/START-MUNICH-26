@@ -1,6 +1,8 @@
-"""Merge tariff + portal (+ carrier bids) into RateCandidates for T3, ranked by the customer's preference.
+"""Merge tariff + portal (+ carrier bids) into RateCandidates for T3, ranked by the customer's
+preference.
 
-python -m app.pricing.tariff_candidates tests/pricing/fixtures/rfq_cgn_del_80kg_pickup.json [--live] [--pickup-cost 45.00]
+python -m app.pricing.tariff_candidates tests/pricing/fixtures/rfq_cgn_del_80kg_pickup.json
+[--live] [--pickup-cost 45.00]
 """
 
 from __future__ import annotations
@@ -66,7 +68,8 @@ def candidate_from_bid(
     evidence: Evidence | None = None,
     includes: tuple[str, ...] = ("air_freight", "fuel", "security"),
 ) -> PricedOption:
-    """A carrier's emailed all-in bid as a candidate (T3 parses the mail; this keeps one contract)."""
+    """A carrier's emailed all-in bid as a candidate (T3 parses the mail; this keeps one
+    contract)."""
     missing = []
     if not {"air_freight", "fuel", "security"} <= set(includes):
         missing.append(
@@ -104,7 +107,8 @@ def candidate_from_bid(
 
 
 def rank(cands: list[PricedOption], prefer: str = "cheapest") -> list[PricedOption]:
-    """Cheapest: by all-in total (air total when pickup still missing - identical pickup for all), then transit.
+    """Cheapest: by all-in total (air total when pickup still missing - identical pickup for all),
+    then transit.
     Fastest: by transit days, then price. Deterministic tie-break on carrier name."""
 
     def price(c):
@@ -201,7 +205,8 @@ async def build_candidates(
             ReviewException(
                 "request",
                 "origin_zone_mismatch",
-                f"origin {req.origin} but pickup zone {req.pickup_zone} maps to {airport_for_zone(req.pickup_zone)}",
+                f"origin {req.origin} but pickup zone {req.pickup_zone} "
+                f"maps to {airport_for_zone(req.pickup_zone)}",
                 scope="request",
             )
         )
@@ -291,7 +296,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     for c in cs.candidates:
         print(
-            f"#  {c.source:6} {c.carrier:26} total={c.total} air={c.air_total} transit={c.transit_days} "
+            f"#  {c.source:6} {c.carrier:26} total={c.total} air={c.air_total} "
+            f"transit={c.transit_days} "
             f"tags={c.tags} missing={c.missing} rate_id={c.rate_id}",
             file=__import__("sys").stderr,
         )

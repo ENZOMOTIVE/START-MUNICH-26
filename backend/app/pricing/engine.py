@@ -1,17 +1,24 @@
 """Deterministic air pricing from an approved tariff lane. Decimal only, no LLM.
 
-  chargeable = max(gross_kg, volume_m3 x divisor)               divisor = tariff's stated (167 in the kit)
-  bracket    = the highest break <= chargeable                  (a bracket runs from its break to the next)
+  chargeable = max(gross_kg, volume_m3 x divisor)               divisor = tariff's stated (167 in
+  the kit)
+  bracket    = the highest break <= chargeable                  (a bracket runs from its break to
+  the next)
   for the applicable bracket AND every higher break b:          <- the weight-break pivot
       billed  = chargeable if b is the applicable break else b
-      freight = max(billed x rate(b), minimum)                 minimum applies to freight BEFORE surcharges
-      fuel    = fuel_per_kg x billed      security = security_per_kg x billed   (billed-weight basis)
+      freight = max(billed x rate(b), minimum)                 minimum applies to freight BEFORE
+      surcharges
+      fuel    = fuel_per_kg x billed      security = security_per_kg x billed   (billed-weight
+      basis)
       total   = freight + fuel + security
   pick the lowest total (tie -> lower billed weight).
 
-Rounding: ROUND_HALF_UP to cents PER CHARGE LINE, total = sum of rounded lines ("per_line", default).
-Evidence: the live portal does exactly this (21 Nov, CGN-DEL JP at 3.71/kg all-in: 100.3 kg -> 372.12, not
-372.11 = round(372.113); 100.1 kg -> 371.37, so not round-up). rounding="total" quantizes once at the end.
+Rounding: ROUND_HALF_UP to cents PER CHARGE LINE, total = sum of rounded lines ("per_line",
+default).
+Evidence: the live portal does exactly this (21 Nov, CGN-DEL JP at 3.71/kg all-in: 100.3 kg ->
+372.12, not
+372.11 = round(372.113); 100.1 kg -> 371.37, so not round-up). rounding="total" quantizes once at
+the end.
 """
 
 from __future__ import annotations

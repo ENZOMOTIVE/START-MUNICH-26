@@ -1,4 +1,5 @@
-"""T2 acceptance (docs/tasks/T2.md): the demo RFQ yields three complete simulated candidates from fixtures;
+"""T2 acceptance (docs/tasks/T2.md): the demo RFQ yields three complete simulated candidates from
+fixtures;
 cheapest is Yellowtail 412.50 EUR = 350.00 + 29.25 + 3.50 + 29.75. No DB, no network."""
 
 import datetime as dt
@@ -129,7 +130,7 @@ def test_default_fixtures_dir_resolves_repo_fixtures():
     assert "demo-fra-lax.json" in names
 
 
-# ---- incomplete quotes are visible but never selectable -------------------------------------------
+# ---- incomplete quotes are visible but never selectable ------------------------------------------
 @pytest.fixture
 def tmp_fixtures(tmp_path: Path):
     (tmp_path / "rates").mkdir()

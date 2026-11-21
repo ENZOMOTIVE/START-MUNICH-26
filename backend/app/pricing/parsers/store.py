@@ -4,7 +4,8 @@ Layout:  <store>/index.json
          <store>/<set_id>/<version-hash>.json        records + exceptions + file checksums
          <store>/<set_id>/originals/<sha>-<name>     the original source bytes
 
-Re-ingesting identical bytes is a no-op. A changed file creates a new version and makes it current; older
+Re-ingesting identical bytes is a no-op. A changed file creates a new version and makes it current;
+older
 versions are never rewritten, so a quote committed against version X can always reload X's evidence.
 """
 

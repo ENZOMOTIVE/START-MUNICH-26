@@ -1,6 +1,8 @@
-"""Paths and env for the pricing package. Secrets come from the environment / git-ignored .env, never code.
+"""Paths and env for the pricing package. Secrets come from the environment / git-ignored .env,
+never code.
 
-The team's `app.core.config.Settings` is the source of truth (`HACKATHON_API_BASE`, `HACKATHON_API_KEY`).
+The team's `app.core.config.Settings` is the source of truth (`HACKATHON_API_BASE`,
+`HACKATHON_API_KEY`).
 `HACK_API_KEY` / `HACK_BASE_URL` are still accepted as a fallback for the standalone CLIs.
 """
 

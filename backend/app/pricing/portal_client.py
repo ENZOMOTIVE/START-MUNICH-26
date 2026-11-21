@@ -1,14 +1,17 @@
 """5U rate portal client: /v1/portal/ports, /brackets, /rates (READ ONLY - this module never books).
 
 * Rate reads are capped per key per minute (X-RateLimit-Limit, currently 10). We track
-  X-RateLimit-Remaining and Retry-After; 429/503 are retried a bounded number of times with a bounded wait.
-* Every lane/airline call runs under its own timeout; one slow or limited source never stalls the others,
+  X-RateLimit-Remaining and Retry-After; 429/503 are retried a bounded number of times with a
+  bounded wait.
+* Every lane/airline call runs under its own timeout; one slow or limited source never stalls the
+others,
   and its failure is recorded (PortalFailure) instead of raised.
 * The portal `total` already includes freight + fuel + security. Pickup is NOT included.
 * `fx_eur_per_usd` (despite the name) = EUR per 1 unit of the returned `currency`.
 * A rate past `valid_until` is never presented as bookable.
 
-    python -m app.pricing.portal_client ports | brackets <airline> | rate <ORIG> <DEST> <airline> <kg> [m3]
+    python -m app.pricing.portal_client ports | brackets <airline> | rate <ORIG> <DEST> <airline>
+    <kg> [m3]
 """
 
 from __future__ import annotations
@@ -165,7 +168,8 @@ class PortalClient:
         return []
 
     async def brackets(self, airline: str) -> list[int] | None:
-        """Sorted weight breaks, or None if the airline is not on the portal (404 -> price by email)."""
+        """Sorted weight breaks, or None if the airline is not on the portal (404 -> price by
+        email)."""
         hit = self._brackets.get(airline)
         if hit and time.monotonic() - hit[0] < self.cache_ttl_s:
             return hit[1]
@@ -200,7 +204,8 @@ class PortalClient:
 def candidate_from_rate(
     r: dict, gross_kg, volume_m3=0, requested_kg=None, now: dt.datetime | None = None
 ) -> PricedOption:
-    """Portal Rate JSON -> PricedOption. Total = portal total (already air+fuel+security), FX'd to EUR."""
+    """Portal Rate JSON -> PricedOption. Total = portal total (already air+fuel+security), FX'd to
+    EUR."""
     now = now or now_utc()
     missing: list[str] = []
     for k in ("rate_id", "total", "currency", "valid_until", "dataset_version"):
@@ -291,7 +296,8 @@ async def portal_quotes(
 ) -> PortalQuotes:
     """All portal airlines on a lane, concurrently. Optionally probe the next break(s) for a pivot.
 
-    A pivot can only win if break/chargeable < rate(current)/rate(next); real break ratios stay under ~1.6,
+    A pivot can only win if break/chargeable < rate(current)/rate(next); real break ratios stay
+    under ~1.6,
     so higher breaks further away than that are not probed (saves the 10/min rate budget).
     """
     out = PortalQuotes()

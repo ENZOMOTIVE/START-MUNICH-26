@@ -1,10 +1,12 @@
 """Map internal pricing results onto the team contract (`app.contracts.models.RateCandidate`).
 
-This is the ONLY output shape T2 hands to T3. Internal working types (`PricedOption` / `PricedCharge` in
+This is the ONLY output shape T2 hands to T3. Internal working types (`PricedOption` /
+`PricedCharge` in
 quote_models.py) never leave this package.
 
     internal                         -> contract
-    PricedOption.complete/missing    -> complete (False if anything missing, total unknown or expired)
+    PricedOption.complete/missing    -> complete (False if anything missing, total unknown or
+    expired)
     PricedOption.dataset_version     -> source_version
     PricedOption.source_links[0]     -> source_ref
     PricedCharge (included in total) -> ChargeLine(code, amount quantized to cents, currency, unit)

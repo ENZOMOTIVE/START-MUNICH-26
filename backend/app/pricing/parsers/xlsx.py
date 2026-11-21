@@ -1,4 +1,5 @@
-"""XLSX tariffs (elbflug, kestrel, vega, wayzata). Cells read as stored values, no float formatting games."""
+"""XLSX tariffs (elbflug, kestrel, vega, wayzata). Cells read as stored values, no float formatting
+games."""
 
 from __future__ import annotations
 
@@ -17,7 +18,8 @@ def _cell(v) -> str:
     if isinstance(v, dt.date):
         return v.isoformat()
     if isinstance(v, float):
-        # repr() is the shortest round-trip string, e.g. 3.73 -> '3.73'; then exact Decimal from that text
+        # repr() is the shortest round-trip string, e.g. 3.73 -> '3.73'; then exact Decimal from
+        # that text
         return format(Decimal(repr(v)), "f")
     return str(v).strip()
 

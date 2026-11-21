@@ -2,15 +2,18 @@
 
 Confidence model (no guessing):
   1. Run tesseract over several preprocessings of each page (original, 2x, 3x, 2x-binarised).
-  2. Parse each pass into per-cell readings; a reading counts only if it matches the strict cell format
+  2. Parse each pass into per-cell readings; a reading counts only if it matches the strict cell
+  format
      (money '1,23' / '134,00', transit 'N days').
   3. A cell is OCR-confirmed when >= 2 passes agree and no other legible reading ties it.
-  4. Cross-check against the hand transcription in manual/<set>.json, which is only trusted for the exact
+  4. Cross-check against the hand transcription in manual/<set>.json, which is only trusted for the
+  exact
      image checksums it was made from:
        - OCR-confirmed and matches manual       -> approved (method ocr, manual agrees)
        - OCR-confirmed, no manual               -> approved (method ocr)
        - OCR-confirmed but DISAGREES with manual -> blocking ReviewException (lane not approved)
-       - not confirmed, manual has it           -> manual value, non-blocking ReviewException (visible)
+       - not confirmed, manual has it           -> manual value, non-blocking ReviewException
+       (visible)
        - not confirmed, no manual               -> blocking ReviewException, field left empty
   If tesseract is not installed, every cell falls into the last two cases.
 """
@@ -295,7 +298,8 @@ def parse_image_set(paths: list[Path], set_id: str, checksums: dict[str, str]) -
                     ReviewException(
                         set_id,
                         "ocr_illegible_manual_used",
-                        f"{lane} {f}: OCR not confident ({raw or 'no reading'}); using hand transcription {man}",
+                        f"{lane} {f}: OCR not confident ({raw or 'no reading'}); "
+                        f"using hand transcription {man}",
                         files,
                         "cell",
                         f"{lane}:{f}",

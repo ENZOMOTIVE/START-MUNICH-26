@@ -1,9 +1,12 @@
 """Portal adapters (`app.contracts.adapters.PortalAdapter`).
 
-* FakePortal  - demo/test double. Returns a documented `HackathonRate`-shaped dict, never touches the network.
-* LivePortal  - GET /v1/portal/rates only (documented in docs/contracts.md). Read-only: `book()` is T3's and
+* FakePortal  - demo/test double. Returns a documented `HackathonRate`-shaped dict, never touches
+the network.
+* LivePortal  - GET /v1/portal/rates only (documented in docs/contracts.md). Read-only: `book()` is
+T3's and
                 stays disabled here. Reads are gated by `live_allowed()` (APP_MODE=live and
-                LIVE_ACTIONS_ENABLED=true) unless the caller explicitly opts in with `allow_reads=True`
+                LIVE_ACTIONS_ENABLED=true) unless the caller explicitly opts in with
+                `allow_reads=True`
                 (used by the CLI / opt-in live test; still GET only).
 
 `rate_candidate()` turns a portal rate into the team `RateCandidate` with simulated=False.
@@ -109,7 +112,8 @@ class LivePortal:
 def rate_candidate(
     rate: dict[str, Any], rfq: Any, *, now: dt.datetime | None = None
 ) -> RateCandidate:
-    """Portal rate JSON -> team RateCandidate (simulated=False unless the rate says it is simulated)."""
+    """Portal rate JSON -> team RateCandidate (simulated=False unless the rate says it is
+    simulated)."""
     vol = _get(rfq, "volume_m3")
     opt = candidate_from_rate(
         rate,

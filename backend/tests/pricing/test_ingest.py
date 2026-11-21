@@ -126,7 +126,9 @@ def test_missing_surcharge_blocks_lane(tmp_path):
     k = tmp_path / "kit"
     k.mkdir()
     src = (KIT / "yellowtail-air-freight-tariff-2026-11.txt").read_text()
-    src = "\n".join(l for l in src.splitlines() if not l.startswith("FRA-ORD:"))
+    src = "\n".join(
+        line for line in src.splitlines() if not line.startswith("FRA-ORD:")
+    )
     (k / "yellowtail-air-freight-tariff-2026-11.txt").write_text(src)
     r = ingest(k)[0][0]
     assert "FRA-ORD" not in {x.key for x in r.records} and len(r.records) == 14
@@ -174,8 +176,12 @@ def test_validity_parsing():
 
 def test_manual_transcription_bound_to_checksum():
     real = {
-        "danube-wings-cargo-tariff-2026-11-p1.jpg": "dd145e8ed92c7dd03125416245415ed244327ad590f0dc7c27b9c16d2f687146",
-        "danube-wings-cargo-tariff-2026-11-p2.jpg": "56647a5fb11ce13b662edab41841628d6fb46c023615bf9f3b25989a83f5ce34",
+        "danube-wings-cargo-tariff-2026-11-p1.jpg": (
+            "dd145e8ed92c7dd03125416245415ed244327ad590f0dc7c27b9c16d2f687146"
+        ),
+        "danube-wings-cargo-tariff-2026-11-p2.jpg": (
+            "56647a5fb11ce13b662edab41841628d6fb46c023615bf9f3b25989a83f5ce34"
+        ),
     }
     assert ocr._load_manual("danube-wings-cargo-tariff-2026-11", real) is not None
     changed = dict(real, **{"danube-wings-cargo-tariff-2026-11-p1.jpg": "0" * 64})

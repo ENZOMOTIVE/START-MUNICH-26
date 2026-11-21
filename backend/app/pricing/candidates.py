@@ -1,12 +1,16 @@
-"""T2 entry point: RFQ -> list[RateCandidate] (team contract). Deterministic, zero LLM/gateway calls.
+"""T2 entry point: RFQ -> list[RateCandidate] (team contract). Deterministic, zero LLM/gateway
+calls.
 
 Order of sources:
   1. Fixtures (FIXTURES_DIR/rates/*.json). Always preferred while live actions are off
      (APP_MODE=demo or LIVE_ACTIONS_ENABLED=false) - the demo never touches the network.
-  2. Live (only when `live_allowed()` or `live=True`): portal calculator, GET /v1/portal/rates for every
-     airline on the lane (+ weight-break pivot probe), merged with Decimal-engine prices from the approved
+  2. Live (only when `live_allowed()` or `live=True`): portal calculator, GET /v1/portal/rates for
+  every
+     airline on the lane (+ weight-break pivot probe), merged with Decimal-engine prices from the
+     approved
      tariff snapshot (follow-up parser output) for carriers that only quote by email.
-     Pickup legs need a real trucker price (`pickup`), otherwise those candidates are complete=False.
+     Pickup legs need a real trucker price (`pickup`), otherwise those candidates are
+     complete=False.
 """
 
 from __future__ import annotations
@@ -90,7 +94,8 @@ def build_rate_candidates(
     fixtures_dir: str | Path | None = None,
     now: dt.datetime | None = None,
 ) -> list[RateCandidate]:
-    """Fixtures first; live portal/tariff pricing only when live actions are allowed (or live=True)."""
+    """Fixtures first; live portal/tariff pricing only when live actions are allowed (or
+    live=True)."""
     live_ok = get_settings().live_allowed() if live is None else live
     if not live_ok:
         return candidates_from_fixtures(rfq, fixtures_dir=fixtures_dir, now=now)

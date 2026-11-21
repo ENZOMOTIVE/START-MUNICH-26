@@ -1,4 +1,5 @@
-"""Hand-checked prices. Every expected number below was computed by hand from the sheet rows quoted."""
+"""Hand-checked prices. Every expected number below was computed by hand from the sheet rows
+quoted."""
 
 import datetime as dt
 from decimal import Decimal
@@ -10,7 +11,8 @@ from app.pricing.pickup import PickupQuote, apply_pickup
 from .conftest import make_lane
 
 YT = "Yellowtail Air Freight"
-# FRA-ORD  4d  min 110.00 | -45 3.73 | +45 3.32 | +100 2.42 | +250 1.82 | ... ; fuel 0.66 security 0.11
+# FRA-ORD  4d  min 110.00 | -45 3.73 | +45 3.32 | +100 2.42 | +250 1.82 | ... ; fuel 0.66 security
+# 0.11
 
 
 def req(dest, kg, m3="0", **kw):
@@ -19,7 +21,8 @@ def req(dest, kg, m3="0", **kw):
 
 def test_pivot_beats_own_bracket(lanes):
     ln = lanes[(YT, "FRA-ORD")]
-    # +45: 80*3.32=265.60 + 80*0.66=52.80 + 80*0.11=8.80 = 327.20 ; +100: 242.00+66.00+11.00 = 319.00
+    # +45: 80*3.32=265.60 + 80*0.66=52.80 + 80*0.11=8.80 = 327.20 ; +100: 242.00+66.00+11.00 =
+    # 319.00
     p = price_lane(ln, "80")
     assert (
         p.total == Decimal("319.00")
@@ -32,7 +35,8 @@ def test_pivot_beats_own_bracket(lanes):
 
 
 def test_pivot_frankfurt_nairobi(lanes):
-    # FRA-NBO +100 2.87, +250 2.18, fuel 0.94 sec 0.16 ; 230 kg: 660.10+216.20+36.80=913.10 ; 250: 545+235+40=820
+    # FRA-NBO +100 2.87, +250 2.18, fuel 0.94 sec 0.16 ; 230 kg: 660.10+216.20+36.80=913.10 ; 250:
+    # 545+235+40=820
     assert price_lane(lanes[(YT, "FRA-NBO")], "230").total == Decimal("820.00")
 
 
@@ -54,7 +58,8 @@ def test_no_pivot_when_own_bracket_cheapest(lanes):
     [
         # exactly on the break -> that break's bracket: 45*3.32=149.40 + 29.70 + 4.95 = 184.05
         ("45", 45, "184.05", False),
-        # just under: -45 gives 167.81+29.69+4.95=202.45 ; paying for 45 kg at +45 gives 184.05 -> pivot
+        # just under: -45 gives 167.81+29.69+4.95=202.45 ; paying for 45 kg at +45 gives 184.05 ->
+        # pivot
         ("44.99", 45, "184.05", True),
         # 100 kg exactly: 242.00 + 66.00 + 11.00 = 319.00
         ("100", 100, "319.00", False),
@@ -74,7 +79,8 @@ def test_applicable_break():
 
 
 def test_volumetric_and_rounding(lanes):
-    # 50 kg, 0.6 m3 -> 100.2 kg chargeable (+100): 242.484 -> 242.48, 66.132 -> 66.13, 11.022 -> 11.02
+    # 50 kg, 0.6 m3 -> 100.2 kg chargeable (+100): 242.484 -> 242.48, 66.132 -> 66.13, 11.022 ->
+    # 11.02
     ln = lanes[(YT, "FRA-ORD")]
     assert price_lane(ln, "50", "0.6").total == Decimal(
         "319.63"
@@ -86,7 +92,8 @@ def test_volumetric_and_rounding(lanes):
 
 def test_own_divisor_and_actual_basis():
     ln = make_lane(divisor_kg_per_m3=Decimal(200), surcharge_basis="actual")
-    # 50 kg, 0.5 m3 -> 100 kg chargeable at divisor 200 (83.5 at 167); +100 -> 200.00 ; surcharges on 50 kg actual
+    # 50 kg, 0.5 m3 -> 100 kg chargeable at divisor 200 (83.5 at 167); +100 -> 200.00 ; surcharges
+    # on 50 kg actual
     p = price_lane(ln, "50", "0.5")
     assert p.chargeable_kg == Decimal("100.0") and p.best.freight == Decimal("200.00")
     assert p.best.fuel == Decimal("25.00") and p.best.security == Decimal("5.00")
@@ -95,7 +102,8 @@ def test_own_divisor_and_actual_basis():
 
 def test_minimum_vs_pivot_synthetic():
     ln = make_lane()
-    # 20 kg: -45 4.00 -> 80 < min 100 -> 100 + 10 + 2 = 112 ; +45: 135+22.5+4.5=162 ; +100: 200+50+10=260
+    # 20 kg: -45 4.00 -> 80 < min 100 -> 100 + 10 + 2 = 112 ; +45: 135+22.5+4.5=162 ; +100:
+    # 200+50+10=260
     p = price_lane(ln, "20")
     assert p.total == Decimal("112.00") and p.best.min_applied and p.best.break_kg == 0
 
