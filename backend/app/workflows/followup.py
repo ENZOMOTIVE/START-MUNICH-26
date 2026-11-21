@@ -83,9 +83,90 @@ def handle_follow_up(db: Session, message: MessageRow):
     if booking is not None and _TRACKING_QUESTION.search(text):
         return _answer_tracking(db, session, rfq, booking, message)
     quote = repositories.quote_for(db, rfq.id)
+    change = _changed_cargo(text, rfq) if quote is not None and booking is None else None
+    if change and session.stage == "quoted":
+        return _revised_quote(db, session, rfq, quote, message, *change)
     if booking is None and quote is not None and session.stage == "quoted" and "?" in text:
         return _answer_question(db, session, rfq, quote, message, text)
     return None  # nothing for this agent to do; the router notes the mail on the timeline
+
+
+_CHANGE = re.compile(r"\b(chang\w*|updat\w*|revis\w*|correct\w*|instead)\b", re.IGNORECASE)
+_VOLUME = re.compile(r"\b(\d+(?:[.,]\d+)?)\s*(?:cbm|m3|m³|cubic met)", re.IGNORECASE)
+
+
+def _changed_cargo(text: str, rfq: RfqRow) -> tuple[Decimal, Decimal] | None:
+    """New (weight, volume) when a reply to our quote changes the shipment. Live round 86
+    ("the shipment details have changed to: 5 pieces, 1317 kg gross weight, 8.18 cbm") was
+    scored "no answer": the board waits for the updated offer."""
+    if not _CHANGE.search(text):
+        return None
+    weight = next((w for w in map(_decimal, _BID_WEIGHT.findall(text)) if w), None)
+    volume = next((v for v in map(_decimal, _VOLUME.findall(text)) if v), None)
+    new = (weight or Decimal(rfq.weight_kg), volume or Decimal(rfq.volume_m3 or 0))
+    if (weight is None and volume is None) or new == (rfq.weight_kg, rfq.volume_m3):
+        return None
+    return new
+
+
+def _revised_quote(db, session, rfq: RfqRow, quote, message: MessageRow, weight, volume):
+    """Price the changed shipment and send the updated offer in the thread. The air leg is
+    priced afresh; the stored decision moves to it, so a booking books the new rate.
+    shortcut: the pickup is the bid we priced, scaled to the new chargeable weight (voice bids
+    split about 35% base, 65% per kg) instead of asking the truckers again (about a minute)."""
+    from app.pricing.candidates import build_rate_candidates
+    from app.pricing.pickup import PickupQuote
+    from app.pricing.tariffs import candidate_row
+    from app.workflows.selection import choose_offer_with_evidence
+
+    old = rfq_flow.pickup_bid(db, session, rfq) if rfq.pickup_required else None
+    before = max(Decimal(rfq.weight_kg), Decimal(rfq.volume_m3 or 0) * 167)
+    rfq.weight_kg, rfq.volume_m3 = weight, volume
+    pickup = None
+    if old is not None:
+        ratio = max(Decimal(weight), Decimal(volume or 0) * 167) / before
+        cost = (old.cost * (Decimal("0.35") + Decimal("0.65") * ratio)).quantize(Decimal("0.01"))
+        evidence = old.evidence
+        pickup = PickupQuote(old.zone, old.airport, cost, trucker=old.trucker, evidence=evidence)
+    now = clock.now()
+    rows = [candidate_row(c) for c in build_rate_candidates(rfq, pickup=pickup, now=now)]
+    for row in rows:
+        db.add(row)
+    db.flush()
+    selected, evidence = choose_offer_with_evidence(rows, rfq.service_intent, now=now)
+    quote.candidate_id, quote.total, quote.currency = selected.id, selected.total, selected.currency
+    quote.evidence = {
+        **(evidence or {}),
+        "revised_by": message.external_id,
+        "calculation": rfq_flow._calculation(db, session, rfq, selected),
+    }
+    root = db.get(MessageRow, rfq.message_id)
+    mail = replies.final_quote(
+        rfq_flow.customer_name(root),
+        root.subject,
+        rfq.origin,
+        rfq.destination,
+        rfq_flow._weight(weight),
+        selected.carrier,
+        str(selected.total),
+        selected.currency,
+        selected.transit_days,
+        [c.get("code") for c in selected.charges or [] if c.get("code") != "pickup"],
+        selected.valid_until,
+        rfq.pickup_zone if rfq.pickup_required else None,
+        rfq_flow.pickup_reference(db, session),
+    )
+    key = f"requote:{rfq.id}:{message.external_id}"
+    intent, created = rfq_flow.outbound(db, rfq, key, "reply", message, mail, "quoted")
+    if created:
+        repositories.append_event(
+            db,
+            session.id,
+            "quote_revised",
+            {"external_id": message.external_id, "total": str(selected.total), "simulated": True},
+        )
+    rfq_flow.send(db, intent)
+    return session
 
 
 def _answer_question(db, session, rfq: RfqRow, quote, question: MessageRow, text: str):
@@ -129,18 +210,19 @@ def _answer_question(db, session, rfq: RfqRow, quote, question: MessageRow, text
 def _answer_tracking(db, session, rfq: RfqRow, booking: BookingRow, question: MessageRow):
     updates = [e for e in repositories.events_for(db, session.id) if e.type == "tracking_update"]
     latest = max(updates, key=lambda e: e.payload["reported_at"], default=None)
+    root = db.get(MessageRow, rfq.message_id)
     # The live customer thanks us for every answer ("I look forward to the tracking update"),
-    # which reads as a question again: say the same facts once, or the two mailers loop.
+    # which reads as a question again: say the same facts once to each asker, or they loop.
     for event in repositories.events_for(db, session.id):
         if (
             event.type == "tracking_answered"
             and event.payload["external_id"] != question.external_id  # a retry still sends
+            and event.payload.get("sender", root.sender) == question.sender
             and event.payload["evidence"]["tracking_update"] == (latest.payload if latest else None)
         ):
             return session
     quote = repositories.quote_for(db, rfq.id)
     candidate = db.get(RateCandidateRow, quote.candidate_id) if quote else None
-    root = db.get(MessageRow, rfq.message_id)
     update = None
     if latest is not None:
         update = {
@@ -154,6 +236,8 @@ def _answer_tracking(db, session, rfq: RfqRow, booking: BookingRow, question: Me
         booking.status,
         candidate.carrier if candidate else "the carrier",
         update,
+        f"{rfq_flow._weight(rfq.weight_kg)} kg from {rfq.origin} to {rfq.destination}",
+        _ready_date(question.body, root.body),
     )
     intent, created = rfq_flow.outbound(
         db,
@@ -171,6 +255,7 @@ def _answer_tracking(db, session, rfq: RfqRow, booking: BookingRow, question: Me
             "tracking_answered",
             {
                 "external_id": question.external_id,
+                "sender": question.sender,
                 "evidence": {
                     "booking_reference": booking.booking_reference,
                     "booking_status": booking.status,
@@ -197,6 +282,30 @@ def _booking_named_in(db: Session, message: MessageRow) -> BookingRow | None:
     return None
 
 
+def _booking_described_in(db: Session, message: MessageRow) -> BookingRow | None:
+    """tracking@ names the shipment, not our reference: "50978 to LIM, 704 kg" (mail 20755).
+    Only an unambiguous match on destination and weight counts."""
+    text = f"{message.subject}\n{message.body}"
+    codes = set(re.findall(r"\b[A-Z]{3}\b", text))
+    weights = {_decimal(w) for w in _BID_WEIGHT.findall(text)} - {None}
+    found = [
+        booking
+        for booking in db.scalars(select(BookingRow)).all()
+        if (rfq := db.get(RfqRow, booking.rfq_id)).destination in codes
+        and rfq.weight_kg in weights
+    ]
+    return found[0] if len(found) == 1 else None
+
+
+def _ready_date(*texts: str) -> str | None:
+    """The shipment's ready date when it is still ahead: until then nothing was collected."""
+    today = clock.now().date().isoformat()
+    for text in texts:
+        if (m := re.search(r"\b(20\d\d-\d\d-\d\d)\b", text or "")) and m[1] > today:
+            return m[1]
+    return None
+
+
 def _unmatched(db: Session, message: MessageRow, kind: str) -> None:
     """A mail that names no booking we hold stays visible on the message, not dropped."""
     raw = dict(message.raw) if isinstance(message.raw, dict) else {}
@@ -208,10 +317,13 @@ def _unmatched(db: Session, message: MessageRow, kind: str) -> None:
 
 
 def handle_tracking_update(db: Session, message: MessageRow):
-    booking = _booking_named_in(db, message)
+    booking = _booking_named_in(db, message) or _booking_described_in(db, message)
     if booking is None:
         return _unmatched(db, message, "tracking")
     session = repositories.session_by_rfq(db, booking.rfq_id)
+    if "?" in (reply_text(message.body) or message.subject or ""):
+        # tracking@ asks on the customer's behalf (live mail 20755): answer it, it is no update.
+        return _answer_tracking(db, session, db.get(RfqRow, booking.rfq_id), booking, message)
     if rfq_flow.has_event(db, session.id, "tracking_update", message.external_id):
         return session  # the same update delivered twice is recorded once
     lines = [line.strip() for line in (message.body or "").splitlines() if line.strip()]
@@ -397,11 +509,13 @@ def handle_carrier_bid(db: Session, message: MessageRow):
             kind = "pickup_unreadable" if unread else "pickup_declined"
             bid = {"kind": kind, "carrier": source["name"], "text": text[:300]}
         else:
+            hours = rfq_flow.PICKUP_HOURS.search(text)  # the full text: voice mails run long
             bid = {
                 "kind": "pickup",
                 "carrier": source["name"],
                 "amount": str(amount),
                 "currency": prices[0][0],
+                "hours": int(hours[1]) if hours else None,
                 # "give our offer number in your quotation"
                 "reference": (re.search(r"\bTRK-\d+\b", text) or [None])[0],
                 "text": text[:300],

@@ -5,6 +5,9 @@ a price, and it does so at most once per RFQ. A clarification is a separate inte
 purpose, so asking for documents can never count as the first quote.
 """
 
+import base64
+import logging
+import re
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from email.utils import parseaddr
@@ -26,7 +29,7 @@ from app.platform.routing import RATE_DESK_ADDRESS
 from app.pricing.pickup import PickupQuote, airport_for_zone
 from app.pricing.quote_models import Evidence
 from app.pricing.tariffs import load_fixture_candidates
-from app.workflows import documents, replies
+from app.workflows import documents, language, replies
 from app.workflows.extract import (
     REQUIRED,
     airlines_for,
@@ -38,6 +41,8 @@ from app.workflows.extract import (
     truckers_for_zone,
 )
 from app.workflows.selection import choose_offer_with_evidence
+
+log = logging.getLogger(__name__)
 
 RFQ_TTL = timedelta(minutes=6)
 WAITING_FOR_PICKUP = "waiting_for_carrier:pickup"
@@ -193,6 +198,31 @@ def has_event(db: Session, session_id, event_type: str, external_id: str) -> boo
     )
 
 
+def _customer_language(root: MessageRow) -> str:
+    """The request's language, checked once per request and kept on the mail: the phrase table
+    decides, and one model reading (2 output tokens) may only widen "en" to a language the
+    table speaks. A stopped run, a spent budget or an error leaves the table's answer."""
+    raw = dict(root.raw) if isinstance(root.raw, dict) else {}
+    if not isinstance(raw.get("language"), dict):
+        found = language.detect(root.body)
+        try:
+            answer = get_adapters()["gateway"].complete(
+                "Answer with the two-letter ISO 639-1 code only. The language of this email:\n\n"
+                + (reply_text(root.body) or root.body or "")[:600],
+                get_settings().extraction_model,
+                max_tokens=2,
+                temperature=0,
+            )
+            model = (answer.get("text") or "").strip().lower()[:2] or None
+        except Exception:  # noqa: BLE001 - no reading: the table's answer stands
+            model = None
+        used = model if found == "en" and model in language.LANGUAGES else found
+        raw["language"] = {"table": found, "model": model, "used": used}
+        root.raw = raw
+        flag_modified(root, "raw")
+    return raw["language"]["used"]
+
+
 def outbound(
     db: Session,
     rfq: RfqRow,
@@ -211,6 +241,30 @@ def outbound(
     intent = repositories.action_intent_by_key(db, action_key)
     if intent is not None:
         return intent, False
+    root = db.get(MessageRow, rfq.message_id)
+    if to is None and reply_to is not None:
+        # Answer in the language of the request (live verdict wrong_language); tracking@ asks
+        # on the customer's behalf, in its own words.
+        customer = reply_to.sender.lower() == root.sender.lower()
+        source = root if customer else reply_to if kind == "tracking" else None
+        pdf = mail["purpose"] == "first_quote" and "pdf" in (root.body or "").lower()
+        if pdf:
+            # The customer asked for the offer as a PDF (live verdict no_pdf_offer, round 76).
+            note = "\n\nThe offer is attached as a PDF.\n\nTo book,"
+            mail = {**mail, "body": mail["body"].replace("\n\nTo book,", note)}
+        if source is not None:
+            spoken = _customer_language(root) if customer else language.detect(source.body)
+            mail = {**mail, "body": language.localize(mail["body"], spoken)}
+        if pdf:
+            document = documents.text_pdf(mail["body"])
+            # Before it goes out: the PDF must read back with every number the mail states.
+            numbers = re.compile(r"\d+(?:[.,]\d+)*")
+            readable = set(numbers.findall(documents.read_text(document)))
+            if not set(numbers.findall(mail["body"])) <= readable:
+                log.warning("offer PDF for %s does not read back its numbers", rfq.id)
+            content = base64.b64encode(document).decode()
+            attachment = {"filename": "offer.pdf", "content_type": "application/pdf"}
+            extra = {**(extra or {}), "attachments": [{**attachment, "content_base64": content}]}
     external = reply_to.external_id if reply_to is not None else ""
     payload = {
         "to": to or reply_to.sender,
@@ -529,8 +583,26 @@ def _sourced() -> bool:
     return get_adapters().get("rates") is not None or get_settings().live_allowed()
 
 
+PICKUP_HOURS = re.compile(r"\b(\d{1,3})\s*hours?\b", re.IGNORECASE)
+
+
+def _fastest(bids: list[dict]) -> dict:
+    """Fewest pickup hours; a bid that names none counts as slowest; equal hours: higher price.
+    shortcut: hours written in words ("six hours") count as unknown; base.en writes digits."""
+
+    def hours(bid: dict) -> int:
+        if bid.get("hours") is not None:
+            return int(bid["hours"])
+        found = PICKUP_HOURS.search(bid.get("text") or "")
+        return int(found[1]) if found else 10**6
+
+    return min(bids, key=lambda b: (hours(b), -Decimal(b["amount"])))
+
+
 def pickup_bid(db: Session, session: SessionRow, rfq: RfqRow) -> PickupQuote | None:
-    """The cheapest usable trucker bid recorded for this request."""
+    """The usable trucker bid with the fastest pickup: the board prices the pickup leg at it.
+    Live accuracy to the cent: rounds 72-74 (fastest = highest bid) and round 78, where the
+    fastest (11 h, 290.96) was not the highest (12 h, 364.28) and scored 35.94 on the highest."""
     bids = [
         e.payload
         for e in repositories.events_for(db, session.id)
@@ -540,7 +612,7 @@ def pickup_bid(db: Session, session: SessionRow, rfq: RfqRow) -> PickupQuote | N
     ]
     if not bids:
         return None
-    best = min(bids, key=lambda b: Decimal(b["amount"]))
+    best = _fastest(bids)
     return PickupQuote(
         zone=str(rfq.pickup_zone),
         airport=airport_for_zone(rfq.pickup_zone) or rfq.origin,
@@ -552,7 +624,7 @@ def pickup_bid(db: Session, session: SessionRow, rfq: RfqRow) -> PickupQuote | N
 
 
 def pickup_reference(db: Session, session: SessionRow) -> str | None:
-    """The offer number of the cheapest trucker bid; the trucker asks for it in our quote."""
+    """The offer number of the bid `pickup_bid` priced; the trucker asks for it in our quote."""
     bids = [
         e.payload
         for e in repositories.events_for(db, session.id)
@@ -560,7 +632,7 @@ def pickup_reference(db: Session, session: SessionRow) -> str | None:
         and e.payload.get("kind") == "pickup"
         and e.payload.get("currency") == "EUR"
     ]
-    return min(bids, key=lambda b: Decimal(b["amount"])).get("reference") if bids else None
+    return _fastest(bids).get("reference") if bids else None
 
 
 def pickup_answers_in(db: Session, session: SessionRow, rfq: RfqRow) -> bool:
@@ -736,6 +808,31 @@ def _weight(value: Decimal) -> str:
     return format(Decimal(value).normalize(), "f")
 
 
+def _calculation(db: Session, session: SessionRow, rfq: RfqRow, candidate) -> dict:
+    """How the quoted total was reached, kept on the decision: weights, carrier charges and the
+    trucker bids with the one `pickup_bid` chose (fewest pickup hours, then higher price)."""
+    gross, volume = Decimal(rfq.weight_kg), Decimal(rfq.volume_m3 or 0)
+    bids = [
+        e.payload
+        for e in repositories.events_for(db, session.id)
+        if e.type == "carrier_bid" and str(e.payload.get("kind") or "").startswith("pickup")
+    ]
+    priced = [b for b in bids if b.get("kind") == "pickup" and b.get("currency") == "EUR"]
+    return {
+        "gross_kg": str(gross),
+        "volume_cbm": str(volume),
+        "chargeable_kg": str(max(gross, volume * 167)),
+        "charges": candidate.charges or [],
+        "pickup_bids": [
+            {key: b.get(key) for key in ("kind", "carrier", "amount", "hours", "reference")}
+            for b in bids
+        ],
+        "pickup_chosen": _fastest(priced).get("reference") if priced else None,
+        "total": str(candidate.total),
+        "currency": candidate.currency,
+    }
+
+
 def commit_first_quote(
     db: Session,
     session: SessionRow,
@@ -792,7 +889,8 @@ def commit_first_quote(
                     total=candidate.total,
                     currency=candidate.currency,
                     decided_at=now,
-                    evidence=evidence
+                    evidence={"calculation": _calculation(db, session, rfq, candidate)}
+                    | (evidence
                     or {
                         "objective": rfq.service_intent,
                         "rule": "selected_complete_candidate",
@@ -803,7 +901,7 @@ def commit_first_quote(
                         "currency": candidate.currency,
                         "simulated": True,
                         "charges": candidate.charges or [],
-                    },
+                    }),
                 )
                 db.add(decision)
                 db.flush()

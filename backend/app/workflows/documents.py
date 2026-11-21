@@ -41,6 +41,46 @@ _NOT_REGULATED = re.compile(
 _IMAGE = (b"\x89PNG", b"\xff\xd8", b"II*\x00", b"MM\x00*")
 
 
+def text_pdf(text: str) -> bytes:
+    """A one-page PDF of `text` (Helvetica, WinAnsi), readable by any PDF text extractor.
+    shortcut: one page of up to 60 wrapped lines; an offer mail is far shorter."""
+    lines = []
+    for line in text.split("\n"):
+        while len(line) > 95:
+            cut = line.rfind(" ", 0, 95) if " " in line[:95] else 95
+            lines.append(line[:cut])
+            line = line[cut:].lstrip()
+        lines.append(line)
+
+    def literal(line: str) -> bytes:
+        raw = line.encode("cp1252", "replace")
+        return b"(" + raw.replace(b"\\", b"\\\\").replace(b"(", b"\\(").replace(b")", b"\\)") + b")"
+
+    stream = b"BT /F1 11 Tf 56 790 Td 15 TL " + b" ".join(
+        literal(line) + b" Tj T*" for line in lines[:60]
+    ) + b" ET"
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R "
+        b"/Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+    ]
+    out, offsets = b"%PDF-1.4\n", []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objects) + 1,
+        xref,
+    )
+    return out
+
+
 def un_numbers(text: str) -> list[str]:
     return sorted({f"UN{digits}" for digits in _UN.findall(text)})
 
@@ -52,8 +92,34 @@ def _ocr(content: bytes) -> str:
     return done.stdout.decode("utf-8", "replace")
 
 
-def read_text(content: bytes) -> str:
-    """Text of a PDF, spreadsheet, scan or text file. The format comes from the bytes."""
+_AUDIO = (b"ID3", b"\xff\xfb", b"\xff\xf3", b"\xff\xf2", b"RIFF", b"OggS")
+_SPOKEN_EUR = re.compile(r"(\d[\d,]*)\s*euros?(?:\s*(?:and\s*)?(\d{1,2})\s*cents?)?", re.I)
+
+
+@lru_cache
+def _whisper():
+    from faster_whisper import WhisperModel  # in the live image only (backend/Dockerfile)
+
+    local = Path("/models/base.en")
+    return WhisperModel(str(local) if local.exists() else "base.en", compute_type="int8")
+
+
+def _transcript(content: bytes) -> str:
+    """A voice message as text, spoken prices written the way the bid reader reads them:
+    "379 euros and 68 cents" and "€321.98" become "379.68 EUR" and "321.98 EUR"."""
+    segments, _ = _whisper().transcribe(io.BytesIO(content), language="en")
+    text = " ".join(segment.text.strip() for segment in segments)
+    text = re.sub(r"€\s?(\d[\d,]*(?:\.\d+)?)", r"\1 EUR", text)
+    return _SPOKEN_EUR.sub(
+        lambda m: f"{m[1]}.{m[2].zfill(2)} EUR" if m[2] else f"{m[1]} EUR", text
+    )
+
+
+def read_text(content: bytes, voice: bool = False) -> str:
+    """Text of a PDF, spreadsheet, scan or text file. The format comes from the bytes.
+    With `voice`, an audio file is transcribed (live round 69: truckers price by voice mail)."""
+    if voice and content.startswith(_AUDIO):
+        return _transcript(content)
     if content.startswith(b"%PDF"):
         import pdfplumber
 
@@ -82,7 +148,7 @@ def read_text(content: bytes) -> str:
     return content.decode("utf-8")
 
 
-def evidence(filename: str, content: bytes) -> dict:
+def evidence(filename: str, content: bytes, voice: bool = False) -> dict:
     """What one attachment proves, from its content alone."""
     found = {
         "filename": filename,
@@ -96,7 +162,7 @@ def evidence(filename: str, content: bytes) -> dict:
     if not content:
         return {**found, "reason": "the file is empty"}
     try:
-        text = read_text(content)
+        text = read_text(content, voice)
     except Exception as exc:  # noqa: BLE001 - a file no reader accepts is simply unreadable
         return {**found, "reason": f"{type(exc).__name__}: {exc}"[:160]}
     if not text.strip():
@@ -125,7 +191,9 @@ def collect(db, message) -> list[dict]:
         try:
             if download is None or attachment.get("id") is None:
                 raise ValueError("the attachment cannot be downloaded here")
-            known[key] = evidence(name, download(message.external_id, attachment["id"]))
+            # Only carrier offers are transcribed: customers restate a voice request in text.
+            voice = message.classification == "carrier_bid"
+            known[key] = evidence(name, download(message.external_id, attachment["id"]), voice)
         except MailboxError as exc:
             if exc.kind != "http_error" or exc.detail.startswith("HTTP 5"):
                 raise  # a busy or unreachable mailbox says nothing about the file: retry the job
