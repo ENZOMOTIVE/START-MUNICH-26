@@ -24,7 +24,7 @@ from app.platform.outbox import deliver_intent
 from app.pricing.pickup import PickupQuote, airport_for_zone
 from app.pricing.quote_models import Evidence
 from app.pricing.tariffs import load_fixture_candidates
-from app.workflows import replies
+from app.workflows import documents, replies
 from app.workflows.extract import REQUIRED, assess_dg, merge, model_fill, truckers_for_zone
 from app.workflows.selection import choose_offer_with_evidence
 
@@ -145,7 +145,7 @@ def assess(db: Session, root: MessageRow) -> dict:
         "method": method,
         "sources": [m.external_id for m in mails],
         "dg": assess_dg(
-            [(f"{m.subject}\n{reply_text(m.body)}", attachments_of(m)) for m in mails]
+            [(f"{m.subject}\n{reply_text(m.body)}", documents.collect(db, m)) for m in mails]
         ),
     }
 
@@ -238,13 +238,18 @@ def _fail(db: Session, session: SessionRow, rfq: RfqRow, code: str) -> None:
 def handle_rfq(db: Session, message: MessageRow) -> SessionRow:
     rfq = repositories.rfq_by_message(db, message.id)
     session = repositories.session_by_rfq(db, rfq.id) if rfq is not None else None
-    if rfq is not None and session is not None and rfq.status in {
-        "quoted",
-        "accepted",
-        "booked",
-        "expired",
-        "failed",
-    }:
+    if (
+        rfq is not None
+        and session is not None
+        and rfq.status
+        in {
+            "quoted",
+            "accepted",
+            "booked",
+            "expired",
+            "failed",
+        }
+    ):
         quote_mail = repositories.first_quote_intent(db, rfq.id)
         if rfq.status == "quoted" and quote_mail is not None:
             send(db, quote_mail)  # only acts on a quote that provably never left
@@ -347,11 +352,17 @@ def advance(db: Session, session: SessionRow, rfq: RfqRow, root: MessageRow, fou
     if dg["blocked"]:
         build = replies.dg_conflict if dg["status"] == "conflict" else replies.dg_documents
         mail = build(name, root.subject, *route, dg["signals"], dg["docs_missing"])
+        notes = [
+            f"I could not use {r['filename']}: {r['reason']}." for r in dg["rejected_documents"]
+        ]
         if dg["unreadable_attachments"]:
             files = ", ".join(dg["unreadable_attachments"])
-            note = f"\n\nI could not open this attachment: {files}."
+            notes.insert(0, f"I could not open this attachment: {files}.")
+        if notes:
+            note = "\n\n" + "\n".join(notes)
             mail["body"] = mail["body"].replace("\n\nBest regards", f"{note}\n\nBest regards")
-        asked = dg["docs_missing"] + [f"unreadable{len(dg['unreadable_attachments'])}"]
+        unusable = dg["unreadable_attachments"] + [r["filename"] for r in dg["rejected_documents"]]
+        asked = dg["docs_missing"] + [f"unusable{len(unusable)}"]
         return _clarify(db, session, rfq, root, mail, asked, found)
     if session.stage == "clarifying":
         session.exception = None

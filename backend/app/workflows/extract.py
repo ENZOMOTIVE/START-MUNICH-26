@@ -11,8 +11,9 @@ from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from pathlib import Path
 
+from app.workflows import documents
+
 REQUIRED = ("origin", "destination", "weight_kg")
-DG_DOCS = ("dgd", "msds")
 _APP = Path(__file__).resolve().parents[1]
 
 _CODE = re.compile(r"\b[A-Z]{3}\b")
@@ -40,13 +41,6 @@ _SIGNAL = re.compile(
     r"|\bhazmat\b|\bflammable\b|\bcorrosive\b|\bdangerous\s+goods\b(?!\s+declaration)|\bDGR?\b",
     re.IGNORECASE,
 )
-_DOC = {
-    "dgd": re.compile(
-        r"(?<![a-z])dgd(?![a-z])|shipper'?s?[ _-]declaration|dangerous[ _-]goods[ _-]declaration",
-        re.IGNORECASE,
-    ),
-    "msds": re.compile(r"(?<![a-z])m?sds(?![a-z])|safety[ _-]data[ _-]sheet", re.IGNORECASE),
-}
 
 
 @lru_cache
@@ -171,16 +165,15 @@ def model_fill(gateway, model: str, text: str, missing: list[str]) -> dict:
 
 
 def assess_dg(mails: list[tuple[str, list[dict]]]) -> dict:
-    """Dangerous-goods position from the customer's mails (text, attachments), oldest first.
+    """Dangerous-goods position from the customer's mails, oldest first.
 
+    Each mail is (text, document evidence from `documents.collect`). A document counts only
+    for what its content says; its file name is never read.
     status: none | docs_missing | conflict | documented | resolved_non_dg
     """
     signals: list[str] = []
-    negated_first = False
-    docs: set[str] = set()
-    unreadable: list[str] = []
-    resolved = False
-    for index, (text, attachments) in enumerate(mails):
+    negated_first = resolved = affirmed = False
+    for index, (text, _) in enumerate(mails):
         negated = bool(_NEGATED.search(text))
         own = [m.group(0) for m in _SIGNAL.finditer(_NEGATED.sub(" ", text))]
         signals += [s for s in own if s not in signals]
@@ -188,23 +181,51 @@ def assess_dg(mails: list[tuple[str, list[dict]]]) -> dict:
             negated_first = negated
         elif negated and not own:
             resolved = True  # asked about the conflict, the customer restated non-dangerous
-        for attachment in attachments or []:
-            name = str(attachment.get("filename") or "")
-            if not attachment.get("size") or attachment.get("readable") is False:
-                unreadable.append(name)
-                continue
-            docs.update(kind for kind, pattern in _DOC.items() if pattern.search(name))
-    missing = [kind for kind in DG_DOCS if kind not in docs]
+        elif own and not negated:
+            affirmed = True  # asked about the conflict, the customer confirmed dangerous goods
+    request_un = documents.un_numbers(" ".join(signals))
+    docs: set[str] = set()
+    unreadable: list[str] = []
+    rejected: list[dict] = []
+    declared_by_document: list[str] = []
+    evidence = [item for _, attachments in mails for item in attachments or []]
+    for item in evidence:
+        name, named = str(item.get("filename") or ""), item.get("un_numbers") or []
+        kinds = item.get("kinds") or []
+        if not item.get("readable"):
+            unreadable.append(name)
+        elif not kinds:
+            reason = "it is neither a dangerous goods declaration nor a safety data sheet"
+            rejected.append({"filename": name, "problem": "unrelated", "reason": reason})
+        elif "dgd" in kinds and not named:
+            reason = "the declaration names no UN number"
+            rejected.append({"filename": name, "problem": "incomplete", "reason": reason})
+        elif request_un and named and not set(request_un) & set(named):
+            reason = f"it is for {', '.join(named)}, your request names {', '.join(request_un)}"
+            rejected.append({"filename": name, "problem": "other_goods", "reason": reason})
+        elif item.get("says_not_regulated") and "dgd" not in kinds:
+            reason = "it says the goods are not regulated for transport"
+            rejected.append({"filename": name, "problem": "contradicts_email", "reason": reason})
+        else:
+            docs.update(kinds)
+            if "dgd" in kinds:
+                declared_by_document += [un for un in named if un not in declared_by_document]
+    # A declaration is itself a statement that the cargo is dangerous, whatever the mail says.
+    signals += [un for un in declared_by_document if un not in signals]
+    required = documents.required_documents(documents.un_numbers(" ".join(signals)))
+    missing = [kind for kind in required if kind not in docs]
+    contradicted = any(r["problem"] == "contradicts_email" for r in rejected)
     if not signals:
         status = "none"
+    elif contradicted:
+        status = "conflict"
+    elif negated_first and not affirmed:
+        status = "resolved_non_dg" if resolved and not declared_by_document else "conflict"
     elif not missing:
         status = "documented"
-    elif negated_first and resolved:
-        status = "resolved_non_dg"
-    elif negated_first:
-        status = "conflict"
     else:
         status = "docs_missing"
+    rules = documents.requirements()
     return {
         "status": status,
         "blocked": status in {"docs_missing", "conflict"},
@@ -213,4 +234,11 @@ def assess_dg(mails: list[tuple[str, list[dict]]]) -> dict:
         "docs_present": sorted(docs),
         "docs_missing": missing if signals else [],
         "unreadable_attachments": unreadable,
+        "rejected_documents": rejected,
+        "documents": evidence,
+        "requirements": {
+            "documents": required,
+            "confirmed": bool(rules.get("confirmed")),
+            "source": rules.get("source"),
+        },
     }

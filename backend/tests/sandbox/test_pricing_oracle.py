@@ -94,7 +94,8 @@ def test_elbflug_fra_dfw_matches_a_calculation_from_its_own_tariff_sheet():
     assert (kg, freight, expected) == (Decimal("300"), Decimal("357.00"), Decimal("621.00"))
 
     elbflug = next(
-        x for x in TariffBook.from_snapshot().lanes("FRA", "DFW")
+        x
+        for x in TariffBook.from_snapshot().lanes("FRA", "DFW")
         if x.carrier == "Elbflug Air Freight"
     )
     assert price_lane(elbflug, Decimal("300"), Decimal("1.2")).total == expected

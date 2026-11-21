@@ -126,9 +126,7 @@ def test_missing_surcharge_blocks_lane(tmp_path):
     k = tmp_path / "kit"
     k.mkdir()
     src = (KIT / "yellowtail-air-freight-tariff-2026-11.txt").read_text()
-    src = "\n".join(
-        line for line in src.splitlines() if not line.startswith("FRA-ORD:")
-    )
+    src = "\n".join(line for line in src.splitlines() if not line.startswith("FRA-ORD:"))
     (k / "yellowtail-air-freight-tariff-2026-11.txt").write_text(src)
     r = ingest(k)[0][0]
     assert "FRA-ORD" not in {x.key for x in r.records} and len(r.records) == 14

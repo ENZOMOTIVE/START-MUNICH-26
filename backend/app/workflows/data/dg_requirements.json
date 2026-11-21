@@ -1,0 +1,6 @@
+{
+  "required_documents": ["dgd", "msds"],
+  "by_un_number": {},
+  "confirmed": false,
+  "source": "Team assumption. Neither docs/tasks/T1-T5 nor the published 5U API description says which documents a dangerous-goods request needs. Ask the organisers, then set confirmed to true and name their answer here."
+}

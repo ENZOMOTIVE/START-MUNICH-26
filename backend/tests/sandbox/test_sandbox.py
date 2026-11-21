@@ -12,8 +12,9 @@ from app.core.errors import DomainError
 from app.db import repositories
 from app.db.models import JobRow
 from app.sandbox import runner
-from app.sandbox.scenarios import SCENARIOS
-from app.workflows import replies
+from app.sandbox.scenarios import DGD_TEXT, SCENARIOS, SDS_TEXT
+from app.sandbox.world import pdf_bytes
+from app.workflows import documents, replies
 from app.workflows.extract import assess_dg, extract, merge
 from fastapi.testclient import TestClient
 from sqlalchemy import text
@@ -280,15 +281,18 @@ def test_unusable_weights_are_asked_about_not_guessed():
 
 
 def test_dangerous_goods_follow_the_evidence():
-    doc = {"filename": "DGD.pdf", "size": 10}
-    sheet = {"filename": "safety_data_sheet.pdf", "size": 10}
+    doc = documents.evidence("a.pdf", pdf_bytes(DGD_TEXT))
+    sheet = documents.evidence("b.pdf", pdf_bytes(SDS_TEXT))
+    named_only = {"filename": "DGD.pdf", "size": 10}  # mailbox metadata: a name, no content
+    by_name = assess_dg([("lithium batteries UN3480", [named_only])])
+    assert by_name["docs_missing"] == ["dgd", "msds"] and by_name["blocked"]
     assert assess_dg([("alkaline AA batteries, non-dangerous toys", [])])["status"] == "none"
     assert assess_dg([("lithium-ion batteries UN3480", [])])["status"] == "docs_missing"
     assert assess_dg([("non-dangerous power banks UN3480", [])])["status"] == "conflict"
     assert assess_dg([("lithium batteries UN3480", [doc, sheet])])["status"] == "documented"
-    unreadable = assess_dg([("UN3480", [doc, {**sheet, "size": 0}])])
+    unreadable = assess_dg([("UN3480", [doc, documents.evidence("b.pdf", b"")])])
     assert unreadable["status"] == "docs_missing" and unreadable["docs_missing"] == ["msds"]
-    assert unreadable["unreadable_attachments"] == ["safety_data_sheet.pdf"]
+    assert unreadable["unreadable_attachments"] == ["b.pdf"]
     cleared = assess_dg([("non-dangerous chairs UN3480", []), ("it is not dangerous goods", [])])
     assert cleared["status"] == "resolved_non_dg"
 

@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     send_min_interval_ms: int = 1100
     # When set, pause, resume and sandbox runs need the header X-Operator-Token.
     operator_token: str = ""
+    dg_requirements_file: str = ""  # default: app/workflows/data/dg_requirements.json
 
     @model_validator(mode="after")
     def _observe_is_read_only(self):

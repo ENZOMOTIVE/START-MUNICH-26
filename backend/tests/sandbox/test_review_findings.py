@@ -31,8 +31,13 @@ PORTAL_500 = {
     **PORTAL,
     "lanes": {
         "FRA-ORD": [
-            {"code": "FI", "name": "Five Hundred Air", "min": "50.00", "transit": 2,
-             "per_kg": {0: "5.00"}}
+            {
+                "code": "FI",
+                "name": "Five Hundred Air",
+                "min": "50.00",
+                "transit": 2,
+                "per_kg": {0: "5.00"},
+            }
         ]
     },
 }
@@ -120,9 +125,16 @@ def test_an_unconditional_acceptance_of_the_same_quote_books(db):
 
 def test_a_fixed_fixture_price_is_not_offered_for_another_weight():
     def offers(kg):
-        request = {"id": str(uuid.uuid4()), "origin": "FRA", "destination": "LAX",
-                   "weight_kg": kg, "volume_m3": None, "pickup_required": True,
-                   "pickup_zone": "60", "service_intent": "cheapest"}
+        request = {
+            "id": str(uuid.uuid4()),
+            "origin": "FRA",
+            "destination": "LAX",
+            "weight_kg": kg,
+            "volume_m3": None,
+            "pickup_required": True,
+            "pickup_zone": "60",
+            "service_intent": "cheapest",
+        }
         return candidates_from_fixtures(request, fixtures_dir=ROOT / "fixtures")
 
     assert all(c.complete for c in offers("250")) and len(offers("250")) == 3
@@ -146,8 +158,9 @@ def test_no_request_is_sent_while_the_portal_budget_is_exhausted():
         return httpx.Response(200, json={"lanes": []})
 
     async def attempt():
-        http = httpx.AsyncClient(base_url="https://sandbox.invalid",
-                                 transport=httpx.MockTransport(handler))
+        http = httpx.AsyncClient(
+            base_url="https://sandbox.invalid", transport=httpx.MockTransport(handler)
+        )
         state = PortalState()
         state.rate_remaining = 0
         state.window_reset = time.monotonic() + 600  # the portal said: wait ten minutes
@@ -182,8 +195,12 @@ def test_a_failed_job_is_not_retried_in_the_same_cycle(db, monkeypatch):
     from app.core.errors import DomainError
 
     long_ago = datetime(2000, 1, 1, tzinfo=UTC)
-    retry = JobRow(kind="route_message", payload={"message_id": str(uuid.uuid4())},
-                   created_at=long_ago, run_after=long_ago)
+    retry = JobRow(
+        kind="route_message",
+        payload={"message_id": str(uuid.uuid4())},
+        created_at=long_ago,
+        run_after=long_ago,
+    )
     db.add(retry)
     db.flush()
 
@@ -208,8 +225,14 @@ def test_a_failed_job_is_not_retried_in_the_same_cycle(db, monkeypatch):
 def test_mail_no_agent_handles_is_left_for_a_person(db):
     case = scenario(
         "unsupported_mail",
-        [{"key": "desk", "from": "ratedesk@hackloop.mail", "subject": "Rate desk answer",
-          "body": "Here is the answer to your question."}],
+        [
+            {
+                "key": "desk",
+                "from": "ratedesk@hackloop.mail",
+                "subject": "Rate desk answer",
+                "body": "Here is the answer to your question.",
+            }
+        ],
         {},
     )
     result = runner.run(case, 42)
@@ -250,7 +273,8 @@ def test_operator_resolves_an_unknown_send(client, db):
 
     session_id = client.post("/internal/demo/run").json()["session_id"]
     quote = next(
-        a for a in client.get(f"/api/sessions/{session_id}/actions").json()
+        a
+        for a in client.get(f"/api/sessions/{session_id}/actions").json()
         if a["kind"] == "first_quote"
     )
     intent = db.get(ActionIntentRow, uuid.UUID(quote["id"]))
@@ -279,14 +303,27 @@ def test_every_customer_mail_follows_the_voice_guide():
         replies.missing_info("Anna", "RFQ", "FRA", "ORD", ["weight_kg", "pickup_zone"], []),
         replies.dg_documents("Anna", "RFQ", "FRA", "ORD", ["UN3480"], ["dgd", "msds"]),
         replies.dg_conflict("Anna", "RFQ", "FRA", "ORD", ["UN3480"], ["dgd"]),
-        replies.final_quote("Anna", "RFQ", "FRA", "ORD", "300", "Bravo Freight", "585.00",
-                            "EUR", 5, ["air_all_in"], when),
-        replies.acceptance_clarification("Anna", "RFQ", "Bravo Freight",
-                                         "amount_differs_from_quote"),
+        replies.final_quote(
+            "Anna",
+            "RFQ",
+            "FRA",
+            "ORD",
+            "300",
+            "Bravo Freight",
+            "585.00",
+            "EUR",
+            5,
+            ["air_all_in"],
+            when,
+        ),
+        replies.acceptance_clarification(
+            "Anna", "RFQ", "Bravo Freight", "amount_differs_from_quote"
+        ),
         replies.no_offer("Anna", "RFQ", "FRA", "ORD", "no carrier returned a complete rate"),
         replies.booking_submitted("Anna", "RFQ", "Bravo Freight", "TM-1"),
-        replies.booking_confirmed("Anna", "RFQ", "Bravo Freight", "BK-1", "FRA", "ORD", "300",
-                                  "585.00", "EUR"),
+        replies.booking_confirmed(
+            "Anna", "RFQ", "Bravo Freight", "BK-1", "FRA", "ORD", "300", "585.00", "EUR"
+        ),
         replies.booking_failed("Anna", "RFQ", "Bravo Freight", "the rate expired"),
         replies.tracking_answer("Anna", "RFQ", "BK-1", "confirmed", "Bravo Freight", None),
     ]
@@ -424,8 +461,9 @@ def test_parallel_requests_never_exceed_the_reported_portal_budget():
         return httpx.Response(200, headers=headers, json={"rate_id": "R-1"})
 
     async def three_at_once():
-        http = httpx.AsyncClient(base_url="https://sandbox.invalid",
-                                 transport=httpx.MockTransport(remote))
+        http = httpx.AsyncClient(
+            base_url="https://sandbox.invalid", transport=httpx.MockTransport(remote)
+        )
         state = PortalState()
         state.rate_remaining, state.seen_at = 2, time.monotonic()
         async with PortalClient(http=http, state=state) as client:

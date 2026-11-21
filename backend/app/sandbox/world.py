@@ -39,6 +39,39 @@ _TOPICS = {
 }
 
 
+def pdf_bytes(text: str) -> bytes:
+    """A one-page PDF that really contains `text`, so a document reader has something to read."""
+    lines = [
+        line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        for line in text.splitlines()
+    ]
+    stream = "BT /F1 11 Tf 50 780 Td 14 TL " + " ".join(f"({line}) Tj T*" for line in lines) + " ET"
+    objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R "
+        "/Resources << /Font << /F1 5 0 R >> >> >>",
+        f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out, offsets = b"%PDF-1.4\n", []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += f"{number} 0 obj\n{body}\nendobj\n".encode("latin-1")
+    table = "".join(f"{offset:010d} 00000 n \n" for offset in offsets)
+    size = len(objects) + 1
+    out += f"xref\n0 {size}\n0000000000 65535 f \n{table}".encode()
+    return out + f"trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{len(out)}\n%%EOF\n".encode()
+
+
+def attachment_bytes(attachment: dict) -> bytes | None:
+    """`text` becomes a real PDF, `content` is served as it is, neither means the file is gone."""
+    if "text" in attachment:
+        return pdf_bytes(attachment["text"])
+    content = attachment.get("content")
+    return content.encode() if isinstance(content, str) else content
+
+
 def _digest(*parts) -> str:
     return hashlib.sha1("|".join(str(p) for p in parts).encode()).hexdigest().upper()
 
@@ -122,7 +155,14 @@ class World:
                 "body": mail["body"],
                 "in_reply_to": request["last"] if request else mail.get("in_reply_to"),
                 "references": [request["root"]] if request else mail.get("references", []),
-                "attachments": mail.get("attachments", []),
+                "attachments": [
+                    {
+                        "id": a["id"],
+                        "filename": a["filename"],
+                        "size": a.get("size", len(attachment_bytes(a) or b"")),
+                    }
+                    for a in mail.get("attachments", [])
+                ],
                 "received_at": received.isoformat(),
             }
             self.inbox.append(item)
@@ -235,10 +275,10 @@ class World:
             self.schedule(reply, airline.get("delay", 30))
 
     def _attachment(self, message_id: int, attachment_id: int) -> httpx.Response:
-        mail = next((m for m in self.inbox if m["id"] == message_id), {})
-        for attachment in mail.get("attachments", []):
-            if attachment.get("id") == attachment_id and "content" in attachment:
-                return httpx.Response(200, content=attachment["content"].encode())
+        for attachment in self.specs.get(message_id, {}).get("attachments", []):
+            content = attachment_bytes(attachment)
+            if attachment.get("id") == attachment_id and content is not None:
+                return httpx.Response(200, content=content)
         return httpx.Response(404, json={"detail": "no such attachment"})
 
     def _customer_reads(self, item: dict) -> None:
@@ -284,7 +324,13 @@ class World:
         else:
             answers = request["rules"].get("answers", {})
             asked = [t for t, words in _TOPICS.items() if any(w in lower for w in words)]
-            known = [answers[t] for t in asked if t in answers]
+            known = []
+            for topic in asked:
+                if topic in answers:
+                    # A list is what the customer says the first, second ... time it is asked.
+                    turns = answers[topic] if isinstance(answers[topic], list) else [answers[topic]]
+                    seen = sum(topic in earlier for earlier in request["questions"])
+                    known.append(turns[min(seen, len(turns) - 1)])
             request["questions"].append(asked)
             if "dg_docs" in asked:
                 request["docs_requested"] = True

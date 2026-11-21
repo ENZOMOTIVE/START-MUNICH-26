@@ -81,9 +81,27 @@ TRUTH = ["FRA", "ORD", "300 kg"]
 PICKUP_BODY = "Please quote 300 kg, 1.2 cbm from FRA to ORD with pickup in zone 60."
 DFW_BODY = "Please quote 300 kg, 1.2 cbm from FRA to DFW."
 DFW_CUSTOMER = {"budget": "5000.00", "truth": ["FRA", "DFW", "300 kg"]}
+DGD_TEXT = (
+    "SHIPPER'S DECLARATION FOR DANGEROUS GOODS\n"
+    "UN3480 Lithium ion batteries, Class 9, Packing Instruction 965\n"
+    "Net quantity 300 kg"
+)
+SDS_TEXT = (
+    "SAFETY DATA SHEET\nProduct: lithium ion cells 18650\n"
+    "Section 14 Transport information: UN3480, Class 9"
+)
 DOCS = [
-    {"id": 1, "filename": "DGD_UN3480.pdf", "size": 48211},
-    {"id": 2, "filename": "MSDS_lithium_cells.pdf", "size": 90112},
+    {"id": 1, "filename": "DGD_UN3480.pdf", "text": DGD_TEXT},
+    {"id": 2, "filename": "MSDS_lithium_cells.pdf", "text": SDS_TEXT},
+]
+# Named like the right papers, but an invoice and a declaration for paint.
+WRONG_DOCS = [
+    {"id": 1, "filename": "MSDS.pdf", "text": "INVOICE 2026-114\nOffice chairs, 40 pieces"},
+    {
+        "id": 2,
+        "filename": "DGD.pdf",
+        "text": "SHIPPER'S DECLARATION FOR DANGEROUS GOODS\nUN1263 Paint, Class 3\n120 L",
+    },
 ]
 TRACKING_FLOW = [
     {
@@ -211,6 +229,34 @@ _ALL = [
             "_totals": {"price_in_non_quote": 0},
         },
         title="Dangerous goods without documents: ask first, quote only after they arrive",
+    ),
+    scenario(
+        "dg_wrong_documents",
+        [
+            rfq(
+                body="Please quote 300 kg lithium-ion batteries (UN3480), 1.2 cbm, "
+                "from FRA to ORD.",
+                customer={
+                    "needs_documents": True,
+                    "answers": {
+                        "dg_docs": [
+                            {"body": "Documents attached.", "attachments": WRONG_DOCS},
+                            {"body": "Sorry, here are the right ones.", "attachments": DOCS},
+                        ]
+                    },
+                },
+            )
+        ],
+        {
+            "rfq1": {
+                **BOOKED,
+                **BRAVO,
+                "dangerous_goods": "documented",
+                "outbound": ["dg_documents", "dg_documents", "first_quote", "booking_confirmed"],
+            },
+            "_totals": {"price_in_non_quote": 0},
+        },
+        title="Files named MSDS.pdf and DGD.pdf with the wrong content are refused, then replaced",
     ),
     scenario(
         "dg_conflict",
