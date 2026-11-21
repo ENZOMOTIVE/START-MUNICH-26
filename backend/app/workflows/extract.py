@@ -25,6 +25,24 @@ _WEIGHT = re.compile(
     _NUM + r"\s*(kg|kgs|kilos?|kilograms?|tons?|tonnes?|lbs?|pounds?)\b", re.IGNORECASE
 )
 _VOLUME = re.compile(_NUM + r"\s*(?:cbm|m3|m³|cubic met(?:er|re)s?)", re.IGNORECASE)
+# "total 600 kg", "total gross weight of 600 kg", "600 kg in total"
+_TOTAL_WEIGHT = re.compile(
+    rf"\btotal\b[^.\n\d]{{0,30}}{_NUM}\s*(kgs?|kilos?|kilograms?)\b"
+    rf"|{_NUM}\s*(kgs?|kilos?|kilograms?)\s+(?:in\s+)?total\b",
+    re.IGNORECASE,
+)
+# A packing list states the unit in the label: "Total gross weight (kg): 454".
+_LABEL_WEIGHT = re.compile(rf"\bgross\s+weight\s*\(kgs?\)[ \t]*[:=][ \t]*{_NUM}", re.IGNORECASE)
+_LABEL_VOLUME = re.compile(rf"\bvolume\s*\((?:cbm|m3|m³)\)[ \t]*[:=][ \t]*{_NUM}", re.IGNORECASE)
+_EACH = re.compile(r"\b(?:each|apiece|per\s+(?:piece|pallet|carton|crate|box|unit))\b", re.I)
+_WORDS = "one two three four five six seven eight nine ten eleven twelve".split()
+_PIECES = re.compile(
+    rf"\b(\d+|{'|'.join(_WORDS)})\s+(?:\w+\s+)?(?:pieces?|pcs|pallets?|plts?|cartons?|crates?"
+    r"|drums?|cases?|box(?:es)?|packages?|colli|skids?|rolls?|bags?)\b",
+    re.IGNORECASE,
+)
+_LOT = re.compile(r"^\s*Lot\s+\d+\s*:\s*(\d+)\s+\w+(.*)$", re.IGNORECASE | re.MULTILINE)
+_DIMS = re.compile(rf"{_NUM}\s*x\s*{_NUM}\s*x\s*{_NUM}\s*(mm|cm|m)\b", re.IGNORECASE)
 _PICKUP = re.compile(r"\b(?:pick[- ]?up|collect(?:ion)?|door)\b", re.IGNORECASE)
 _ZONE = re.compile(r"\bzone\s*(\d{2})\b", re.IGNORECASE)
 # Live customers name their site by German postcode; its first two digits are the pickup zone.
@@ -93,6 +111,11 @@ def airlines_for(destination: str) -> tuple[tuple[str, str], ...]:
 
 
 def _decimal(raw: str) -> Decimal | None:
+    """A written number. "245,50" and "245.50" are 245.50; "1.234,56" and "1,234.56" are
+    1234.56. None when it can be read two ways, so the caller asks or holds."""
+    if "." in raw and "," in raw:
+        mark = max(raw.rfind("."), raw.rfind(","))  # the last separator is the decimal mark
+        raw = re.sub(r"[.,]", "", raw[:mark]) + "." + raw[mark + 1 :]
     if re.fullmatch(r"\d{1,3}\.\d{3}", raw):
         return None  # 1.200 is 1200 in one notation and 1.2 in another: ask, do not guess
     try:
@@ -135,18 +158,41 @@ def _read(text: str) -> dict:
         fields["origin"] = origin
     if destination:
         fields["destination"] = destination
-    weight = _WEIGHT.search(text)
-    if weight:
-        value, unit = _decimal(weight.group(1)), weight.group(2).lower()
-        if value is None:
+    pieces = _PIECES.search(text)
+    count = pieces.group(1).lower() if pieces else None
+    count = Decimal(_WORDS.index(count) + 1 if count in _WORDS else count) if count else None
+
+    def times(match) -> Decimal | None:
+        """1, or the piece count when the figure is stated per piece ("300 kg each")."""
+        before, after = text[max(0, match.start() - 6) : match.start()], text[match.end() :]
+        each = re.search(r"each\s*$", before, re.I) or _EACH.match(after.lstrip(" ,")[:12])
+        return count if each else Decimal(1)
+
+    total, label = _TOTAL_WEIGHT.search(text), _LABEL_WEIGHT.search(text)
+    weight = total or _WEIGHT.search(text)
+    if label and not total and _decimal(label.group(1)) is not None:
+        fields["weight_kg"] = str(_decimal(label.group(1)))
+    elif weight:
+        number, unit = [group for group in weight.groups() if group]
+        value, unit = _decimal(number), unit.lower()
+        factor = Decimal(1) if total else times(weight)
+        if value is None or factor is None:  # "300 kg each" with no piece count is not a total
             notes.append(f"weight '{weight.group(0)}' is ambiguous")
         elif unit.startswith(("lb", "pound")):
             notes.append(f"weight '{weight.group(0)}' is not in kg")
         else:
-            fields["weight_kg"] = str(value * 1000 if unit.startswith("ton") else value)
-    volume = _VOLUME.search(text)
+            fields["weight_kg"] = str(factor * (value * 1000 if unit.startswith("ton") else value))
+    volume = _LABEL_VOLUME.search(text) or _VOLUME.search(text)
+    dims = _DIMS.search(text)
     if volume and _decimal(volume.group(1)) is not None:
-        fields["volume_m3"] = str(_decimal(volume.group(1)))
+        if times(volume):
+            fields["volume_m3"] = str(times(volume) * _decimal(volume.group(1)))
+    elif dims and None not in [_decimal(side) for side in dims.groups()[:3]]:
+        # No volume stated: length x width x height of one piece, times the piece count.
+        sides = [_decimal(side) for side in dims.groups()[:3]]
+        per_m3 = {"mm": 10**9, "cm": 10**6, "m": 1}[dims.group(4).lower()]
+        fields["volume_m3"] = str(round((count or 1) * sides[0] * sides[1] * sides[2] / per_m3, 3))
+    fields.update(_lots(text))
     zone = _ZONE.search(text)
     self_delivery = bool(_SELF_DELIVERY.search(text))
     postcode_zones = {code[:2] for code in _POSTCODE.findall(text)}
@@ -161,6 +207,36 @@ def _read(text: str) -> dict:
     if _FASTEST.search(text):
         fields["service_intent"] = "fastest"
     return {"fields": fields, "notes": notes}
+
+
+def _lots(text: str) -> dict:
+    """Totals of a request that lists its cargo as lots: "Lot 2: 3 pallets, each 160 kg gross
+    (142 kg net), each 100 x 60 x 46 cm". Empty when there are no lots or one cannot be read."""
+    weight = volume = Decimal(0)
+    lots = _LOT.findall(text)
+    for count, rest in lots:
+        kg = cbm = None
+        for part in rest.split(", "):  # ", " keeps "1,410 kg" whole
+            times = Decimal(count) if re.search(r"\b(?:each|per)\b", part, re.I) else 1
+            dims, stated, gross = _DIMS.search(part), _VOLUME.search(part), _WEIGHT.search(part)
+            if dims and cbm is None:
+                sides = [_decimal(side) for side in dims.groups()[:3]]
+                if None in sides:
+                    return {}
+                per_m3 = {"mm": 10**9, "cm": 10**6, "m": 1}[dims.group(4).lower()]
+                cbm = times * sides[0] * sides[1] * sides[2] / per_m3
+            elif stated and cbm is None:
+                cbm = times * (_decimal(stated.group(1)) or 0)
+            elif gross and kg is None and gross.group(2).lower().startswith("k"):
+                kg = times * (_decimal(gross.group(1)) or 0)  # gross is named before net
+        if not kg:
+            return {}
+        weight += kg
+        volume = None if volume is None or not cbm else volume + cbm
+    if not lots:
+        return {}
+    found = {"weight_kg": str(weight)}
+    return {**found, "volume_m3": str(round(volume, 3))} if volume else found
 
 
 def merge(mails: list[tuple[str, str]]) -> dict:
@@ -286,6 +362,11 @@ def assess_dg(mails: list[tuple[str, list[dict]]]) -> dict:
                 declared_by_document += [un for un in named if un not in declared_by_document]
     # A declaration is itself a statement that the cargo is dangerous, whatever the mail says.
     signals += [un for un in declared_by_document if un not in signals]
+    # So is a UN number in any other attached file: live packing lists name one under a mail
+    # that calls the cargo "general, non-dangerous", and a quote without the papers is refused.
+    for item in evidence:
+        if item.get("readable") and not item.get("says_not_regulated"):
+            signals += [un for un in item.get("un_numbers") or [] if un not in signals]
     required = documents.required_documents(documents.un_numbers(" ".join(signals)))
     missing = [kind for kind in required if kind not in docs]
     contradicted = any(r["problem"] == "contradicts_email" for r in rejected)

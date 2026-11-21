@@ -7,15 +7,15 @@ x-live-env: &live-env
   FRONTEND_ORIGIN: http://127.0.0.1:5176
   FIXTURES_DIR: /fixtures
   OPERATOR_TOKEN: ${OPERATOR_TOKEN:?set in .env.live}
-  # Automatic since 2026-11-21 21:57 (team decision): no operator hold, no run budget. Set both
-  # back to "true" for a supervised run, where each request waits for POST /api/sessions/{id}/admit.
-  HOLD_NEW_REQUESTS: "false"
-  RUN_LIMITS: "false"
-  RUN_MINUTES: "60"
-  RUN_MAX_RFQS: "10"
-  RUN_MAX_MAILS: "40"
-  RUN_MAX_BOOKINGS: "10"
-  RUN_MAX_MODEL_CALLS: "10"
+  # Supervised trial since 2026-11-21 22:28: every request waits for POST /api/sessions/{id}/admit,
+  # and the run is capped at 20 mail sends, 5 bookings and 5 model calls.
+  HOLD_NEW_REQUESTS: "true"
+  RUN_LIMITS: "true"
+  RUN_MINUTES: "30"
+  RUN_MAX_RFQS: "1"
+  RUN_MAX_MAILS: "20"
+  RUN_MAX_BOOKINGS: "5"
+  RUN_MAX_MODEL_CALLS: "5"
   RUN_MAX_TOKENS_IN: "20000"
   RUN_MAX_TOKENS_OUT: "5000"
   RUN_MAX_SPEND_USD: "1.00"

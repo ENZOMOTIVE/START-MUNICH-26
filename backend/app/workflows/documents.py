@@ -101,6 +101,7 @@ def evidence(filename: str, content: bytes) -> dict:
         "kinds": [kind for kind in KINDS if _KIND[kind].search(text)],
         "un_numbers": un_numbers(text),
         "says_not_regulated": bool(_NOT_REGULATED.search(text)),
+        "text": text[:4000],  # a request may state its details only in the attached file
     }
 
 
