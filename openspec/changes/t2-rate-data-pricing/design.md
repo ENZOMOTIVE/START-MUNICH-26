@@ -21,8 +21,11 @@ tests/pricing/
 ```
 
 ## Key decisions
-- **All money is `Decimal`.** No float anywhere in pricing. One quantize step
-  at the end; rounding mode per source, default ROUND_HALF_UP.
+- **All money is `Decimal`.** No float anywhere in pricing (floats are refused).
+  Rounding: ROUND_HALF_UP to cents per charge line, total = sum of rounded lines.
+  Changed from "one quantize at the end" after live evidence: the portal returns
+  372.12 for 100.3 kg at 3.71/kg all-in (exact 372.113), i.e. per-line rounding.
+  `rounding="total"` remains available.
 - **Chargeable weight** = `max(gross_kg, volume_m3 * 167)`. Portal applies its
   own; sheets apply each tariff's stated divisor.
 - **Weight-break pivot.** Compute the total for the applicable bracket *and*
@@ -43,6 +46,12 @@ tests/pricing/
 `carrier, lane(origin,dest), service(cheapest/fastest/transit_days), total,
 currency, charges[ChargeLine], chargeable_weight_kg, rate_id|null,
 valid_until|null, dataset_version, source_links[], evidence{}`.
+Implemented in `pricing/models.py` (see spec "RateCandidate fields").
+
+## Pickup leg
+No tariff prices trucking. The truck cost comes from a trucker bid / human as a
+`PickupQuote(zone, airport, cost, currency, fx)`. An RFQ with a pickup zone but no
+`PickupQuote` yields `complete=False, missing=["pickup"]` (never an invented number).
 
 ## Reuse
 Port and harden the existing parsers/engine from the earlier prototype

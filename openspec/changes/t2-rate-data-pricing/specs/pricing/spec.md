@@ -54,3 +54,15 @@ conversion rule SHALL NOT be marked complete.
 - **WHEN** a validated RFQ fixture is priced
 - **THEN** T3 receives eligible RateCandidate records sufficient to quote and
   book without re-deriving any price
+
+#### RateCandidate fields (implemented in `pricing/models.py`, `to_dict()` JSON)
+- `carrier`, `carrier_code`, `lane{origin,destination}`, `source` (`portal` | `tariff` | `bid`)
+- `service{transit_days, tags[cheapest|fastest]}`
+- `total` (all-in EUR string, 2 dp, incl. pickup; null unless complete), `currency` = `EUR`
+- `air_total` (air leg EUR), `source_total` + `source_currency` + `fx_eur_per_unit` (carrier's own price)
+- `charges[]`: `{code: air_freight|fuel|security|air_all_in|pickup, description, amount, amount_exact,
+  currency, basis_kg, rate, evidence}`
+- `chargeable_weight_kg`, `billed_weight_kg`, `break_kg`, `pivoted`
+- `rate_id` (portal only), `valid_until` (ISO, UTC), `dataset_version` (portal `v1` or tariff `set@hash`)
+- `complete`, `missing[]` (e.g. `pickup`, `fx:USD`, `expired`, `valid_until`), `bookable`, `eligible`
+- `source_links[]`, `evidence{}` (portal response / tariff pivot options / validity)

@@ -1,0 +1,426 @@
+{
+ "request": {
+  "origin": "CGN",
+  "destination": "DEL",
+  "gross_kg": "80",
+  "volume_m3": "0.2",
+  "pickup_zone": "50",
+  "prefer": "cheapest"
+ },
+ "generated_at": "2026-11-21T14:12:03.841015+00:00",
+ "best": {
+  "carrier": "Juniper Cargo Lines",
+  "carrier_code": "JP",
+  "lane": {
+   "origin": "CGN",
+   "destination": "DEL"
+  },
+  "source": "portal",
+  "service": {
+   "transit_days": 5,
+   "tags": [
+    "cheapest"
+   ]
+  },
+  "total": "360.20",
+  "currency": "EUR",
+  "charges": [
+   {
+    "code": "air_all_in",
+    "description": "Air freight all-in (freight+fuel+security) Juniper Cargo Lines portal rate",
+    "amount": "315.20",
+    "amount_exact": "315.2",
+    "currency": "EUR",
+    "included_in_total": true,
+    "basis_kg": "80",
+    "evidence": {
+     "source_file": "GET /v1/portal/rates",
+     "locator": "R-Ry43BzuFpTFiPEop",
+     "raw": "{\"airline\": \"Juniper Cargo Lines\", \"airline_code\": \"JP\", \"chargeable_weight_kg\": \"80\", \"currency\": \"EUR\", \"dataset_version\": \"v1\", \"destination\": \"DEL\", \"origin\": \"CGN\", \"rate_id\": \"R-Ry43BzuFpTFiPEop\", \"total\": \"315.20\", \"transit_days\": 5, \"valid_until\": \"2026-11-21T14:27:04.842976+00:00\", \"weight_kg\": \"80\"}",
+     "method": "portal"
+    }
+   },
+   {
+    "code": "pickup",
+    "description": "Truck pickup zone 50 -> CGN",
+    "amount": "45.00",
+    "amount_exact": "45",
+    "currency": "EUR",
+    "included_in_total": true,
+    "evidence": {
+     "source_file": "cli --pickup-cost",
+     "method": "manual"
+    }
+   }
+  ],
+  "chargeable_weight_kg": "80",
+  "billed_weight_kg": "80",
+  "break_kg": null,
+  "pivoted": false,
+  "rate_id": "R-Ry43BzuFpTFiPEop",
+  "valid_until": "2026-11-21T14:27:04.842976+00:00",
+  "dataset_version": "v1",
+  "air_total": "315.20",
+  "source_total": "315.20",
+  "source_currency": "EUR",
+  "fx_eur_per_unit": null,
+  "complete": true,
+  "missing": [],
+  "source_links": [
+   "portal:rate:R-Ry43BzuFpTFiPEop"
+  ],
+  "evidence": {
+   "portal_response": {
+    "rate_id": "R-Ry43BzuFpTFiPEop",
+    "airline": "Juniper Cargo Lines",
+    "airline_code": "JP",
+    "origin": "CGN",
+    "destination": "DEL",
+    "weight_kg": "80",
+    "chargeable_weight_kg": "80",
+    "total": "315.20",
+    "currency": "EUR",
+    "transit_days": 5,
+    "valid_until": "2026-11-21T14:27:04.842976+00:00",
+    "dataset_version": "v1"
+   },
+   "fetched_at": "2026-11-21T14:12:04.931501+00:00",
+   "requested_weight_kg": "80",
+   "includes": [
+    "air_freight",
+    "fuel",
+    "security"
+   ],
+   "excludes": [
+    "pickup"
+   ]
+  },
+  "bookable": true,
+  "eligible": true
+ },
+ "candidates": [
+  {
+   "carrier": "Juniper Cargo Lines",
+   "carrier_code": "JP",
+   "lane": {
+    "origin": "CGN",
+    "destination": "DEL"
+   },
+   "source": "portal",
+   "service": {
+    "transit_days": 5,
+    "tags": [
+     "cheapest"
+    ]
+   },
+   "total": "360.20",
+   "currency": "EUR",
+   "charges": [
+    {
+     "code": "air_all_in",
+     "description": "Air freight all-in (freight+fuel+security) Juniper Cargo Lines portal rate",
+     "amount": "315.20",
+     "amount_exact": "315.2",
+     "currency": "EUR",
+     "included_in_total": true,
+     "basis_kg": "80",
+     "evidence": {
+      "source_file": "GET /v1/portal/rates",
+      "locator": "R-Ry43BzuFpTFiPEop",
+      "raw": "{\"airline\": \"Juniper Cargo Lines\", \"airline_code\": \"JP\", \"chargeable_weight_kg\": \"80\", \"currency\": \"EUR\", \"dataset_version\": \"v1\", \"destination\": \"DEL\", \"origin\": \"CGN\", \"rate_id\": \"R-Ry43BzuFpTFiPEop\", \"total\": \"315.20\", \"transit_days\": 5, \"valid_until\": \"2026-11-21T14:27:04.842976+00:00\", \"weight_kg\": \"80\"}",
+      "method": "portal"
+     }
+    },
+    {
+     "code": "pickup",
+     "description": "Truck pickup zone 50 -> CGN",
+     "amount": "45.00",
+     "amount_exact": "45",
+     "currency": "EUR",
+     "included_in_total": true,
+     "evidence": {
+      "source_file": "cli --pickup-cost",
+      "method": "manual"
+     }
+    }
+   ],
+   "chargeable_weight_kg": "80",
+   "billed_weight_kg": "80",
+   "break_kg": null,
+   "pivoted": false,
+   "rate_id": "R-Ry43BzuFpTFiPEop",
+   "valid_until": "2026-11-21T14:27:04.842976+00:00",
+   "dataset_version": "v1",
+   "air_total": "315.20",
+   "source_total": "315.20",
+   "source_currency": "EUR",
+   "fx_eur_per_unit": null,
+   "complete": true,
+   "missing": [],
+   "source_links": [
+    "portal:rate:R-Ry43BzuFpTFiPEop"
+   ],
+   "evidence": {
+    "portal_response": {
+     "rate_id": "R-Ry43BzuFpTFiPEop",
+     "airline": "Juniper Cargo Lines",
+     "airline_code": "JP",
+     "origin": "CGN",
+     "destination": "DEL",
+     "weight_kg": "80",
+     "chargeable_weight_kg": "80",
+     "total": "315.20",
+     "currency": "EUR",
+     "transit_days": 5,
+     "valid_until": "2026-11-21T14:27:04.842976+00:00",
+     "dataset_version": "v1"
+    },
+    "fetched_at": "2026-11-21T14:12:04.931501+00:00",
+    "requested_weight_kg": "80",
+    "includes": [
+     "air_freight",
+     "fuel",
+     "security"
+    ],
+    "excludes": [
+     "pickup"
+    ]
+   },
+   "bookable": true,
+   "eligible": true
+  },
+  {
+   "carrier": "Ultraviolet Air Freight",
+   "carrier_code": "UV",
+   "lane": {
+    "origin": "CGN",
+    "destination": "DEL"
+   },
+   "source": "portal",
+   "service": {
+    "transit_days": 4,
+    "tags": []
+   },
+   "total": "427.40",
+   "currency": "EUR",
+   "charges": [
+    {
+     "code": "air_all_in",
+     "description": "Air freight all-in (freight+fuel+security) Ultraviolet Air Freight portal rate",
+     "amount": "382.40",
+     "amount_exact": "382.4",
+     "currency": "EUR",
+     "included_in_total": true,
+     "basis_kg": "80",
+     "evidence": {
+      "source_file": "GET /v1/portal/rates",
+      "locator": "R-JRWJwr1PZeQunAFc",
+      "raw": "{\"airline\": \"Ultraviolet Air Freight\", \"airline_code\": \"UV\", \"chargeable_weight_kg\": \"80\", \"currency\": \"EUR\", \"dataset_version\": \"v1\", \"destination\": \"DEL\", \"origin\": \"CGN\", \"rate_id\": \"R-JRWJwr1PZeQunAFc\", \"total\": \"382.40\", \"transit_days\": 4, \"valid_until\": \"2026-11-21T14:27:05.530217+00:00\", \"weight_kg\": \"80\"}",
+      "method": "portal"
+     }
+    },
+    {
+     "code": "pickup",
+     "description": "Truck pickup zone 50 -> CGN",
+     "amount": "45.00",
+     "amount_exact": "45",
+     "currency": "EUR",
+     "included_in_total": true,
+     "evidence": {
+      "source_file": "cli --pickup-cost",
+      "method": "manual"
+     }
+    }
+   ],
+   "chargeable_weight_kg": "80",
+   "billed_weight_kg": "80",
+   "break_kg": null,
+   "pivoted": false,
+   "rate_id": "R-JRWJwr1PZeQunAFc",
+   "valid_until": "2026-11-21T14:27:05.530217+00:00",
+   "dataset_version": "v1",
+   "air_total": "382.40",
+   "source_total": "382.40",
+   "source_currency": "EUR",
+   "fx_eur_per_unit": null,
+   "complete": true,
+   "missing": [],
+   "source_links": [
+    "portal:rate:R-JRWJwr1PZeQunAFc"
+   ],
+   "evidence": {
+    "portal_response": {
+     "rate_id": "R-JRWJwr1PZeQunAFc",
+     "airline": "Ultraviolet Air Freight",
+     "airline_code": "UV",
+     "origin": "CGN",
+     "destination": "DEL",
+     "weight_kg": "80",
+     "chargeable_weight_kg": "80",
+     "total": "382.40",
+     "currency": "EUR",
+     "transit_days": 4,
+     "valid_until": "2026-11-21T14:27:05.530217+00:00",
+     "dataset_version": "v1"
+    },
+    "fetched_at": "2026-11-21T14:12:05.595143+00:00",
+    "requested_weight_kg": "80",
+    "includes": [
+     "air_freight",
+     "fuel",
+     "security"
+    ],
+    "excludes": [
+     "pickup"
+    ]
+   },
+   "bookable": true,
+   "eligible": true
+  },
+  {
+   "carrier": "Wayzata Air Cargo",
+   "carrier_code": null,
+   "lane": {
+    "origin": "CGN",
+    "destination": "DEL"
+   },
+   "source": "tariff",
+   "service": {
+    "transit_days": 2,
+    "tags": [
+     "fastest"
+    ]
+   },
+   "total": "451.40",
+   "currency": "EUR",
+   "charges": [
+    {
+     "code": "air_freight",
+     "description": "Air freight 80 kg x 3.67/kg (break 45 kg)",
+     "amount": "293.60",
+     "amount_exact": "293.6",
+     "currency": "EUR",
+     "included_in_total": true,
+     "basis_kg": "80",
+     "rate": "3.67",
+     "evidence": {
+      "source_file": "wayzata-air-cargo-tariff-2026-11.xlsx",
+      "checksum": "8eb8ab54ffe0f62989577a897b10311616c2f40a551d7730424a7a1730058b27",
+      "locator": "Sheet1!A12",
+      "raw": "CGN Cologne > DEL Delhi | 2 days | 87.98 | 4.69 | 3.67 | 3.02 | 2.38 | 2.09 | 1.64",
+      "method": "xlsx"
+     }
+    },
+    {
+     "code": "fuel",
+     "description": "Fuel surcharge 1.15/kg",
+     "amount": "92.00",
+     "amount_exact": "92",
+     "currency": "EUR",
+     "included_in_total": true,
+     "basis_kg": "80",
+     "rate": "1.15",
+     "evidence": {
+      "source_file": "wayzata-air-cargo-tariff-2026-11.xlsx",
+      "checksum": "8eb8ab54ffe0f62989577a897b10311616c2f40a551d7730424a7a1730058b27",
+      "locator": "Sheet1!A40",
+      "raw": "CGN Cologne > DEL Delhi: fuel 1.15 per kg, security 0.26 per kg",
+      "method": "xlsx"
+     }
+    },
+    {
+     "code": "security",
+     "description": "Security surcharge 0.26/kg",
+     "amount": "20.80",
+     "amount_exact": "20.8",
+     "currency": "EUR",
+     "included_in_total": true,
+     "basis_kg": "80",
+     "rate": "0.26",
+     "evidence": {
+      "source_file": "wayzata-air-cargo-tariff-2026-11.xlsx",
+      "checksum": "8eb8ab54ffe0f62989577a897b10311616c2f40a551d7730424a7a1730058b27",
+      "locator": "Sheet1!A40",
+      "raw": "CGN Cologne > DEL Delhi: fuel 1.15 per kg, security 0.26 per kg",
+      "method": "xlsx"
+     }
+    },
+    {
+     "code": "pickup",
+     "description": "Truck pickup zone 50 -> CGN",
+     "amount": "45.00",
+     "amount_exact": "45",
+     "currency": "EUR",
+     "included_in_total": true,
+     "evidence": {
+      "source_file": "cli --pickup-cost",
+      "method": "manual"
+     }
+    }
+   ],
+   "chargeable_weight_kg": "80",
+   "billed_weight_kg": "80",
+   "break_kg": 45,
+   "pivoted": false,
+   "rate_id": null,
+   "valid_until": null,
+   "dataset_version": "wayzata-air-cargo-tariff-2026-11@e3167539d447",
+   "air_total": "406.40",
+   "source_total": "406.40",
+   "source_currency": "EUR",
+   "fx_eur_per_unit": null,
+   "complete": true,
+   "missing": [],
+   "source_links": [
+    "wayzata-air-cargo-tariff-2026-11.xlsx"
+   ],
+   "evidence": {
+    "set_id": "wayzata-air-cargo-tariff-2026-11",
+    "tariff_valid": [
+     "2026-11-01",
+     "2026-11-30"
+    ],
+    "divisor_kg_per_m3": "167",
+    "rounding": "per_line",
+    "applicable_break": 45,
+    "pivot_options": [
+     {
+      "break_kg": 45,
+      "billed_kg": "80",
+      "total": "406.40",
+      "min_applied": false
+     },
+     {
+      "break_kg": 100,
+      "billed_kg": "100",
+      "total": "443.00",
+      "min_applied": false
+     },
+     {
+      "break_kg": 300,
+      "billed_kg": "300",
+      "total": "1137.00",
+      "min_applied": false
+     },
+     {
+      "break_kg": 500,
+      "billed_kg": "500",
+      "total": "1750.00",
+      "min_applied": false
+     },
+     {
+      "break_kg": 1000,
+      "billed_kg": "1000",
+      "total": "3050.00",
+      "min_applied": false
+     }
+    ],
+    "booking": "no portal rate_id: book by email to the carrier"
+   },
+   "bookable": false,
+   "eligible": true
+  }
+ ],
+ "exceptions": [],
+ "portal_failures": []
+}
