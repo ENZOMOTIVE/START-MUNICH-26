@@ -251,7 +251,8 @@ export interface paths {
         put?: never;
         /**
          * Resolve Mail
-         * @description A person has dealt with this mail: clear its flag (and lift a tariff hold).
+         * @description A person has dealt with this mail: clear its flag. `approve` uses a carrier's bid that
+         *     waited for review; clearing a tariff hold reprices that carrier's open offers.
          */
         post: operations["resolve_mail_api_review_mail__external_id__resolve_post"];
         delete?: never;
@@ -387,6 +388,14 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** MailResolution */
+        MailResolution: {
+            /**
+             * Approve
+             * @default false
+             */
+            approve: boolean;
         };
         /** QuoteDecision */
         QuoteDecision: {
@@ -1069,7 +1078,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["MailResolution"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

@@ -79,6 +79,19 @@ class LiveMailbox:
     def poll(self, since_id: int, limit: int = POLL_LIMIT) -> dict[str, Any] | list[Any]:
         return self._get("/v1/mailbox/messages", since_id=since_id, limit=limit).json()
 
+    def round_answered(self, received_at: datetime) -> bool:
+        """True when the board already shows an answer of this team to the request that
+        arrived at `received_at` (GET /v1/board/me; a round's `sent_at` is that time)."""
+        try:
+            rounds = self._get("/v1/board/me").json().get("requests") or []
+        except (MailboxError, ValueError) as exc:
+            log.warning("board check failed, relying on local records: %s", exc)
+            return False
+        when = received_at if received_at.tzinfo else received_at.replace(tzinfo=UTC)
+        return any(
+            item.get("answered_at") and _timestamp(item.get("sent_at")) == when for item in rounds
+        )
+
     def download_attachment(self, message_id: int | str, attachment_id: int | str) -> bytes:
         path = f"/v1/mailbox/messages/{int(message_id)}/attachments/{int(attachment_id)}"
         return self._get(path).content

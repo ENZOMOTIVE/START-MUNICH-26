@@ -23,7 +23,11 @@ export function ActionsPanel({ sessionId, paused }: { sessionId: string; paused:
   }, [sessionId]);
 
   useEffect(() => {
+    // Polled, so what the worker does to an action shows up here. Drafts being typed are
+    // kept apart in `drafts` and are not overwritten by a reload.
     void load();
+    const timer = window.setInterval(() => void load(), 2000);
+    return () => window.clearInterval(timer);
   }, [load, paused]);
 
   const act = async (work: () => Promise<unknown>) => {
@@ -37,7 +41,7 @@ export function ActionsPanel({ sessionId, paused }: { sessionId: string; paused:
   };
 
   return (
-    <section className="actions" aria-labelledby="actions-heading">
+    <section aria-labelledby="actions-heading">
       <h2 id="actions-heading">Outbound actions</h2>
       {!paused && <p className="sandbox-note">Pause the session to edit or send by hand.</p>}
       {error && (

@@ -35,6 +35,8 @@ export function SessionDetail() {
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Kept apart from load errors: the 2 s refresh must not wipe "your pause was refused".
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!id) {
@@ -75,11 +77,12 @@ export function SessionDetail() {
       return;
     }
     setBusy(true);
+    setActionError(null);
     try {
       await pauseSession(id);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "pause failed");
+      setActionError(err instanceof Error ? err.message : "pause failed");
     } finally {
       setBusy(false);
     }
@@ -90,11 +93,12 @@ export function SessionDetail() {
       return;
     }
     setBusy(true);
+    setActionError(null);
     try {
       await resumeSession(id);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "resume failed");
+      setActionError(err instanceof Error ? err.message : "resume failed");
     } finally {
       setBusy(false);
     }
@@ -145,6 +149,11 @@ export function SessionDetail() {
       {error ? (
         <p className="status error" role="alert">
           {error}
+        </p>
+      ) : null}
+      {actionError ? (
+        <p className="status error" role="alert">
+          Not done: {actionError}
         </p>
       ) : null}
 

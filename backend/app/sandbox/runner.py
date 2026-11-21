@@ -193,7 +193,8 @@ def _route(world: World, factory, entry: list, state: dict) -> None:
     else:
         code = _attempt(factory, message_id)
     entry[2] += 1
-    if code in RETRYABLE and entry[2] < MAX_ATTEMPTS:
+    # Like the worker: a paused session is waited for, other retries have a budget.
+    if code == "session_paused" or (code in RETRYABLE and entry[2] < MAX_ATTEMPTS):
         return
     state["todo"].remove(entry)
     if code:
@@ -534,22 +535,50 @@ def write_report(results: list[dict], out: Path) -> None:
                 f"{mark[booked]} | {why} |"
             )
     priced = max(1, total["priced_requests"])
+    faults = Counter((f["where"].split(":")[0], f["fault"]) for r in results for f in r["faults"])
+    repeats = {
+        "rates": "a portal read failed and was asked again once, or the carrier was left out",
+        "mailbox_send": "a 429 is sent again after Retry-After; a lost answer is never resent",
+        "booking": "a lost answer is asked again with the same rate_id and team_reference",
+        "model": "a failed model call falls back to asking the customer; it is not repeated",
+    }
     lines += [
         "",
-        "## Calls by endpoint (simulated)",
+        "## Calls by endpoint (simulated, not a bill)",
         "",
-        f"- Requests priced: {total['priced_requests']}",
-        f"- Portal rate reads: {total['portal_rate_reads']} "
-        f"({total['portal_rate_reads'] / priced:.1f} per priced request)",
-        f"- Portal lanes and weight-break reads: {total['portal_metadata_reads']} "
-        f"({total['portal_metadata_reads'] / priced:.1f} per priced request; "
-        f"{total['portal_cache_hits']} answered from cache)",
-        f"- Mail sends: {total['mails_sent']}; attachment reads: {total['attachment_reads']}",
-        f"- Mailbox reads: {total['mailbox_polls']} (the simulator polls every step; "
-        "not a live figure)",
-        f"- Booking requests: {total['booking_requests']} for {total['booked']} bookings",
-        f"- Model calls: {total['model_calls']} (fake model)",
+        "Counts of requests the application made to the simulator. No real request was made "
+        "and no cost was incurred; real costs can only come from the organisers' usage data.",
+        "",
+        "| Endpoint | Calls | Per priced request | Note |",
+        "| --- | --- | --- | --- |",
+        f"| `GET /v1/portal/rates` | {total['portal_rate_reads']} | "
+        f"{total['portal_rate_reads'] / priced:.1f} | one per airline on the lane, plus one "
+        "for the next weight break when it could be cheaper |",
+        f"| `GET /v1/portal/ports`, `/brackets` | {total['portal_metadata_reads']} | "
+        f"{total['portal_metadata_reads'] / priced:.1f} | kept for the life of the worker; "
+        f"{total['portal_cache_hits']} answered from that cache. Each scenario starts a new "
+        "worker, so a long-running worker reads far fewer |",
+        f"| `POST /v1/portal/bookings` | {total['booking_requests']} | | "
+        f"{total['bookings_created']} portal bookings created |",
+        f"| `POST /v1/mailbox/messages` | {total['mails_sent']} | "
+        f"{total['mails_sent'] / priced:.1f} | {total['carrier_mails_sent']} to carriers, "
+        "the rest to customers |",
+        f"| `GET /v1/mailbox/messages/{{id}}/attachments/{{id}}` | {total['attachment_reads']} "
+        "| | each attachment once |",
+        f"| `GET /v1/mailbox/messages` | {total['mailbox_polls']} | | the simulator polls "
+        "every step; a live worker polls on a timer, so this is not a live figure |",
+        f"| `POST /v1/gateway/chat/completions` | {total['model_calls']} | | fake model; "
+        "used only when the rules cannot read a request |",
+        "",
+        f"Requests priced: {total['priced_requests']} of {total['received']} received.",
+        "",
+        "Repeated calls and why:",
+        "",
     ]
+    lines += [
+        f"- {count} x `{fault}` on {where}: {repeats.get(where, 'see the fault list')}"
+        for (where, fault), count in sorted(faults.items())
+    ] or ["- none"]
     lines += ["", "## Rejection reasons (local customer rules)", ""]
     lines += [f"- {reason}" for r in results for reason in r["rejection_reasons"]] or ["None."]
     lines += ["", "## Injected faults", ""]

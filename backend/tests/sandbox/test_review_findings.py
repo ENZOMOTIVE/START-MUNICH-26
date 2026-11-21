@@ -46,6 +46,8 @@ PORTAL_500 = {
 class _Settings:
     """Stands in for get_settings() where one value has to differ."""
 
+    hold_new_requests = False
+
     def __init__(self, **values):
         self.__dict__.update(values)
 
@@ -556,3 +558,79 @@ def test_unseen_wording_is_read_and_quoted_the_same(body, db):
     assert request["extracted"]["method"] == "rules"
     assert (request["extracted"]["origin"], request["extracted"]["destination"]) == ("FRA", "ORD")
     assert request["quote"]["total"] == "585.00" and request["stage"] == "booked"
+
+
+# ---------- a takeover may last longer than a job's retries ----------
+
+
+def test_a_job_waits_for_a_paused_session_however_long_the_pause_lasts(db, monkeypatch):
+    import uuid
+    from datetime import UTC, timedelta
+
+    import app.platform.jobs as jobs
+    from app.db.models import JobRow
+    from app.platform.mailbox import ingest_message
+    from sqlalchemy import select
+
+    stamp = uuid.uuid4().hex[:10]
+    mail = {
+        "external_id": f"ext-{stamp}",
+        "thread_id": f"thr-{stamp}",
+        "sender": "buyer@shipper.example",
+        "subject": "Re: quote",
+        "body": "We accept.",
+        "received_at": datetime.now(UTC),
+        "source": "test",
+        "simulated": True,
+        "raw": {},
+    }
+    message, _ = ingest_message(db, mail)
+    job = db.execute(
+        select(JobRow).where(JobRow.payload["message_id"].astext == str(message.id))
+    ).scalar_one()
+    state = {"paused": True, "looked": 0}
+
+    def route(db, message_id):
+        if str(message_id) == str(message.id) and state["paused"]:
+            state["looked"] += 1
+            raise DomainError("session_paused")
+
+    monkeypatch.setattr(jobs, "route_message", route)
+    monkeypatch.setattr(jobs, "PAUSED_RECHECK", timedelta(0))
+    while state["looked"] < job.max_attempts + 3:  # well past the normal retry budget
+        jobs.process_jobs_once(db, "test-worker")
+    db.refresh(job)
+    assert job.status == "pending" and job.last_error.startswith("session_paused")
+
+    state["paused"] = False  # the operator resumes
+    for _ in range(20):
+        jobs.process_jobs_once(db, "test-worker")
+        db.refresh(job)
+        if job.status != "pending":
+            break
+    assert job.status == "done"
+
+
+def test_a_supervised_trial_holds_every_new_request_until_an_operator_releases_it(db, monkeypatch):
+    import app.workflows.rfq as rfq_flow
+    from app.core.config import get_settings
+    from app.db import repositories
+    from app.db.models import MessageRow
+
+    held = get_settings().model_copy(update={"hold_new_requests": True})
+    monkeypatch.setattr(rfq_flow, "get_settings", lambda: held)
+    seen = []
+
+    def look(db, world):
+        root = str(world.requests["rfq1"]["root"])
+        message = db.query(MessageRow).filter(MessageRow.external_id == root).one()
+        session = repositories.session_by_thread(db, message.thread_id)
+        portal = sum(n for call, n in world.calls.items() if "/v1/portal/" in call)
+        seen.append((session.paused, session.exception, len(world.sent), portal))
+
+    actions = [{"at": 40, "do": look}, {"at": 45, "do": "resume", "request": "rfq1"}]
+    request = runner.run(scenario("held", [rfq()], {}, actions=actions), 42)["requests"]["rfq1"]
+    # Held: paused, on the review list, no mail and not one portal request.
+    assert seen == [(True, "waiting_for_operator_release", 0, 0)]
+    assert request["quote_latency_s"] >= 45 and request["stage"] == "booked"
+    assert request["blocked_on"] is None

@@ -12,6 +12,7 @@ from email.utils import parseaddr
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core import clock
 from app.core.config import get_settings
@@ -31,6 +32,7 @@ from app.workflows.extract import (
     airlines_for,
     assess_dg,
     merge,
+    model_check,
     model_fill,
     truckers_for_zone,
 )
@@ -40,6 +42,7 @@ RFQ_TTL = timedelta(minutes=6)
 WAITING_FOR_PICKUP = "waiting_for_carrier:pickup"
 WAITING_FOR_RATE = "waiting_for_carrier:rate"
 WAITING_FOR_CARRIER = (WAITING_FOR_PICKUP, WAITING_FOR_RATE)
+HELD_FOR_RELEASE = "waiting_for_operator_release"
 
 
 def _aware(dt: datetime) -> datetime:
@@ -288,6 +291,9 @@ def handle_rfq(db: Session, message: MessageRow) -> SessionRow:
         db.flush()
     if session is None:
         session = SessionRow(rfq_id=rfq.id, stage="intake", deadline=rfq.expires_at, simulated=True)
+        if get_settings().hold_new_requests:
+            # Supervised trial: nothing is priced or sent until a person releases the request.
+            session.paused, session.exception = True, HELD_FOR_RELEASE
         db.add(session)
         db.flush()
         repositories.append_event(
@@ -326,6 +332,11 @@ def advance(db: Session, session: SessionRow, rfq: RfqRow, root: MessageRow, fou
     now = clock.now()
     if now >= _aware(rfq.expires_at):
         _block_expired(db, session, rfq)
+    if session.paused:
+        # A person holds this session: no pricing, no portal calls, no mail until they resume.
+        raise DomainError("session_paused")
+    if session.exception == HELD_FOR_RELEASE:
+        session.exception = None
 
     fields = found["fields"]
     for name in ("origin", "destination", "weight_kg", "volume_m3", "pickup_zone"):
@@ -383,6 +394,7 @@ def advance(db: Session, session: SessionRow, rfq: RfqRow, root: MessageRow, fou
             {"dangerous_goods": dg["status"], "source_mails": found["sources"], "simulated": True},
         )
 
+    _cross_check(db, session, root, fields)
     pickup = None
     if rfq.pickup_required and rfq.pickup_zone and _sourced():
         # A door pickup needs a trucker's price. Fixtures (demo) already contain one.
@@ -442,6 +454,27 @@ def advance(db: Session, session: SessionRow, rfq: RfqRow, root: MessageRow, fou
     )
     commit_first_quote(db, session, rfq, selected, evidence=evidence)
     return session
+
+
+def _cross_check(db: Session, session: SessionRow, root: MessageRow, fields: dict) -> None:
+    """One model reading of an admitted request, made once and kept on the mail. Where it
+    differs from the rules the session is held for a person; after they resume, the rules'
+    reading stands."""
+    model = get_adapters().get("check_model")
+    raw = root.raw if isinstance(root.raw, dict) else {}
+    if model is None or "model_check" in raw:
+        return
+    text = "\n\n".join(f"{m.subject}\n{reply_text(m.body)}" for m in customer_mails(db, root))
+    differences = model_check(model["gateway"], model["name"], text, fields)
+    root.raw = {**raw, "model_check": {"model": model["name"], "differences": differences}}
+    flag_modified(root, "raw")
+    repositories.append_event(
+        db, session.id, "model_check", {"differences": differences, "simulated": False}
+    )
+    if differences:
+        session.paused, session.exception = True, "extraction_needs_review"
+        db.flush()
+        raise DomainError("session_paused")
 
 
 def _sourced() -> bool:

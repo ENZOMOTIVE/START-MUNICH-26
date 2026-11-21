@@ -14,6 +14,7 @@ from app.core.config import get_settings
 from app.core.errors import DomainError, NotFoundError
 from app.crm import queries
 from app.crm.queries import SessionDetail, SessionListItem
+from app.db import repositories
 from app.db.models import ActionIntentRow, GatewayUsageRow, MessageRow, SessionRow
 from app.db.session import get_db, get_session_factory
 from app.platform import get_adapters
@@ -197,6 +198,19 @@ def resolve_unknown(
     payload["_resolved_by_operator"] = "sent" if body.sent else "not_sent"
     intent.payload = payload
     flag_modified(intent, "payload")
+    session = db.get(SessionRow, session_id)
+    if session.exception == "send_unknown":
+        session.exception = None  # answered: it no longer waits for a person
+    repositories.append_event(
+        db,
+        session_id,
+        "send_resolved",
+        {
+            "action_key": intent.action_key,
+            "by_operator": payload["_resolved_by_operator"],
+            "simulated": True,
+        },
+    )
     db.flush()
     return _action(intent)
 
@@ -255,9 +269,12 @@ def review(db: Session = Depends(get_db)):
             | (MessageRow.raw["tariff"]["status"].astext == "review_required")
             | (MessageRow.raw["bid"]["status"].astext == "review_required")
         )
-        .order_by(MessageRow.received_at)
+        # By arrival in this system, so the newest items are the ones shown when the list is cut.
+        .order_by(MessageRow.created_at)
     ).all()
     return {
+        "sessions_total": len(sessions),
+        "mail_total": len(mails),
         "sessions": [
             {"id": str(s.id), "stage": s.stage, "reason": s.exception, "paused": s.paused}
             for s in sessions[-200:]

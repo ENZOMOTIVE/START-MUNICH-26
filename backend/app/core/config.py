@@ -7,8 +7,10 @@ from urllib.parse import urlsplit
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# The only hosts a sandbox process may be configured to talk to. `sandbox.invalid` never resolves.
-SANDBOX_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "sandbox.invalid"})
+# The only hosts a sandbox process may be configured to talk to. `sandbox.invalid` never
+# resolves; `sim` is the simulator container on the drill stack's internal network.
+SIMULATOR_HOST = "sim"
+SANDBOX_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "sandbox.invalid", SIMULATOR_HOST})
 
 
 class Settings(BaseSettings):
@@ -45,7 +47,25 @@ class Settings(BaseSettings):
     send_min_interval_ms: int = 1100
     # When set, pause, resume and sandbox runs need the header X-Operator-Token.
     operator_token: str = ""
+    # Supervised trial: every new request waits, paused, until an operator releases it.
+    hold_new_requests: bool = False
     dg_requirements_file: str = ""  # default: app/workflows/data/dg_requirements.json
+    # Bounded live run (app/platform/runlimits.py). With RUN_LIMITS=true nothing leaves for a
+    # thread an operator has not admitted, and every external action is counted against these.
+    run_limits: bool = False
+    run_minutes: int = 60
+    run_max_rfqs: int = 10
+    run_max_mails: int = 40
+    run_max_bookings: int = 10
+    run_max_model_calls: int = 10
+    run_max_tokens_in: int = 20000
+    run_max_tokens_out: int = 5000
+    run_max_spend_usd: float = 1.0
+    # One model cross-check of the extracted fields per admitted request (LLM_MODE=gateway).
+    # Prices are USD per 1M tokens for EXTRACTION_MODEL; 0 means unverified: no call is made.
+    extraction_model: str = "gpt-4o-mini"
+    model_price_in_usd: float = 0.0
+    model_price_out_usd: float = 0.0
 
     @model_validator(mode="after")
     def _observe_is_read_only(self):
@@ -88,6 +108,13 @@ class Settings(BaseSettings):
 
     def live_allowed(self) -> bool:
         return self.app_mode == "live" and self.live_actions_enabled
+
+    def sandbox_simulator(self) -> str | None:
+        """Base URL of the simulator container, when this sandbox process runs against one."""
+        host = urlsplit(self.hackathon_api_base).hostname
+        if self.app_mode == "sandbox" and host == SIMULATOR_HOST:
+            return self.hackathon_api_base
+        return None
 
     def fixtures_path(self) -> Path:
         if self.fixtures_dir:

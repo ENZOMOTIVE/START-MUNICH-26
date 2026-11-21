@@ -7,6 +7,7 @@ from app.db.models import MessageRow
 from app.db.repositories import claim_job
 from app.platform.router import route_message
 
+PAUSED_RECHECK = timedelta(seconds=5)
 RETRYABLE = frozenset({"send_failed", "send_throttled", "send_in_progress", "session_paused"})
 
 
@@ -33,7 +34,12 @@ def process_jobs_once(db, worker_id: str, limit: int = 10) -> list:
             job.last_error = f"{exc.code}: {exc}"
             # Only a temporary condition is worth another attempt. Bad input, an expired
             # request or an uncertain send will not get better by repeating it.
-            if exc.code in RETRYABLE and job.attempts < job.max_attempts:
+            if exc.code == "session_paused":
+                # A person holds this session for as long as they need. Look again shortly;
+                # a pause never uses up the job's attempts.
+                job.status = "pending"
+                job.run_after = datetime.now(UTC) + PAUSED_RECHECK
+            elif exc.code in RETRYABLE and job.attempts < job.max_attempts:
                 job.status = "pending"
                 job.run_after = datetime.now(UTC) + backoff(job.attempts)
             else:

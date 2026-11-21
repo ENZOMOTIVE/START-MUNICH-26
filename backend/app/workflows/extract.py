@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from pathlib import Path
 
+from app.pricing.pickup import airport_for_zone
 from app.workflows import documents
 
 REQUIRED = ("origin", "destination", "weight_kg")
@@ -26,6 +27,14 @@ _WEIGHT = re.compile(
 _VOLUME = re.compile(_NUM + r"\s*(?:cbm|m3|m³|cubic met(?:er|re)s?)", re.IGNORECASE)
 _PICKUP = re.compile(r"\b(?:pick[- ]?up|collect(?:ion)?|door)\b", re.IGNORECASE)
 _ZONE = re.compile(r"\bzone\s*(\d{2})\b", re.IGNORECASE)
+# Live customers name their site by German postcode; its first two digits are the pickup zone.
+_POSTCODE = re.compile(r"\b(\d{5})\b(?!\s*(?:kgs?|cbm|m3|pieces|pcs)\b)", re.IGNORECASE)
+# "we deliver to FRA ourselves", "no pickup needed", "no need to arrange pickup"
+_SELF_DELIVERY = re.compile(
+    r"\bdeliver\b[^.\n]*\bourselves\b"
+    r"|\bno(?:\s+need\s+(?:to\s+arrange|for))?\s+(?:a\s+)?(?:pick[- ]?up|collection)\b",
+    re.IGNORECASE,
+)
 _FASTEST = re.compile(
     r"\b(?:fastest|urgent(?:ly)?|asap|express|quickest|as soon as possible)\b", re.IGNORECASE
 )
@@ -124,10 +133,16 @@ def extract(subject: str, body: str) -> dict:
     if volume and _decimal(volume.group(1)) is not None:
         fields["volume_m3"] = str(_decimal(volume.group(1)))
     zone = _ZONE.search(text)
+    self_delivery = bool(_SELF_DELIVERY.search(text))
+    postcode_zones = {code[:2] for code in _POSTCODE.findall(text)}
     if zone:
         fields["pickup_zone"] = zone.group(1)
-    if zone or _PICKUP.search(text):
+    elif not self_delivery and len(postcode_zones) == 1:
+        fields["pickup_zone"] = postcode_zones.pop()  # two different postcodes: ask, do not guess
+    if zone or (not self_delivery and ("pickup_zone" in fields or _PICKUP.search(text))):
         fields["pickup_required"] = True
+    if "origin" not in fields and airport_for_zone(fields.get("pickup_zone")):
+        fields["origin"] = airport_for_zone(fields["pickup_zone"])  # the zone's departure airport
     if _FASTEST.search(text):
         fields["service_intent"] = "fastest"
     return {"fields": fields, "notes": notes}
@@ -171,6 +186,41 @@ def model_fill(gateway, model: str, text: str, missing: list[str]) -> dict:
                 found["weight_kg"] = str(weight)
         return found
     return {}
+
+
+def model_check(gateway, model: str, text: str, fields: dict) -> list[str] | None:
+    """A model reads the request on its own; returns the fields where it differs from the
+    rules' reading (empty: it agrees), or None when it gave no usable answer."""
+    prompt = (
+        "Read this air-freight request. Answer with JSON only: "
+        '{"destination": "IATA code", "weight_kg": total gross weight of the whole shipment, '
+        '"volume_cbm": total volume or null, "pickup_postcode": "the 5-digit postcode a truck '
+        'must collect from, or null if the customer delivers to the airport", '
+        '"service": "cheapest" or "fastest"}\n\n' + text[:4000]
+    )
+    try:
+        answer = gateway.complete(
+            prompt, model, max_tokens=120, temperature=0, response_format={"type": "json_object"}
+        )
+        data = json.loads(answer.get("text") or "")
+        postcode = str(data.get("pickup_postcode") or "")
+        theirs = {
+            "destination": str(data.get("destination") or "").upper(),
+            "weight_kg": Decimal(str(data.get("weight_kg"))),
+            "volume_m3": Decimal(str(data["volume_cbm"])) if data.get("volume_cbm") else None,
+            "pickup_zone": postcode[:2] if re.fullmatch(r"\d{5}", postcode) else None,
+            "service_intent": str(data.get("service") or "cheapest").lower(),
+        }
+    except Exception:  # noqa: BLE001 - no budget, timeout, HTTP error, bad JSON: no second opinion
+        return None
+    ours = {
+        "destination": fields.get("destination"),
+        "weight_kg": Decimal(str(fields.get("weight_kg") or 0)),
+        "volume_m3": Decimal(str(fields["volume_m3"])) if fields.get("volume_m3") else None,
+        "pickup_zone": fields.get("pickup_zone") if fields.get("pickup_required") else None,
+        "service_intent": str(fields.get("service_intent") or "cheapest"),
+    }
+    return [name for name in ours if ours[name] != theirs[name]]
 
 
 def assess_dg(mails: list[tuple[str, list[dict]]]) -> dict:

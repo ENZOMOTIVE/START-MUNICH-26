@@ -101,6 +101,31 @@ verify:
 sandbox-down:
 	$(SANDBOX) down
 
+# ---------------------------------------------------------------------------------------------
+# Drill: a real API and worker against the simulator as a container (own database, port 5435).
+# Used for the container-kill checks and for checking the operator UI in a browser.
+# ---------------------------------------------------------------------------------------------
+.PHONY: drill-up drill-check drill-ui drill-down
+DRILL := $(SANDBOX) --profile drill
+DRILL_SERVICES := drill-postgres sim drill-api drill-worker drill-gateway sim-gateway
+
+drill-up:
+	$(DRILL) up --build -d --wait $(DRILL_SERVICES)
+	@echo "drill API        http://127.0.0.1:8102   (operator token: sandbox-operator)"
+	@echo "simulator        http://127.0.0.1:8101/_sim/state"
+	@echo "operator UI      run 'make drill-ui', then open http://127.0.0.1:5175"
+
+# Kills and restarts the drill worker around a mail send, and tries to reach the internet from
+# inside the drill containers. It refuses to touch any container outside project fiveu-sandbox.
+drill-check:
+	cd "$(ROOT)/backend" && uv run python scripts/drill.py
+
+drill-ui:
+	cd "$(ROOT)/frontend" && VITE_API_URL=http://127.0.0.1:8102 pnpm dev --host 127.0.0.1 --port 5175 --strictPort
+
+drill-down:
+	$(DRILL) stop $(DRILL_SERVICES)
+
 # Deletes ONLY the sandbox database volume (fiveu-sandbox_fiveu_sandbox_pgdata).
 # Run it yourself, and only with: make sandbox-reset CONFIRM=sandbox
 sandbox-reset:

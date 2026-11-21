@@ -25,7 +25,7 @@ from app.db.models import (
     RfqRow,
     SessionRow,
 )
-from app.platform import get_adapters
+from app.platform import get_adapters, runlimits
 from app.platform.booking import BookingRejected, BookingUnknown
 from app.platform.carriers import load_carriers
 from app.platform.decisions import reply_text
@@ -182,7 +182,10 @@ def confirm_booking(db: Session, session: SessionRow) -> BookingRow:
                 raise
 
     if booking.status in OPEN and booking.rate_id:
-        _submit(db, session, booking)
+        # Once the portal has given a reference it has answered: only the airline's
+        # confirmation mail moves the booking on, so the request is not posted again.
+        if not booking.booking_reference:
+            _submit(db, session, booking)
     elif booking.status in OPEN:
         _book_by_mail(db, session, rfq, booking, candidate)
     if booking.status == "confirmed":
@@ -208,6 +211,11 @@ def _submit(db: Session, session: SessionRow, booking: BookingRow) -> None:
     else:
         if db.scalar(select(SessionRow.paused).where(SessionRow.id == session.id)):
             raise DomainError("session_paused")
+        # Bounded live run: only an admitted thread books, and every attempt is counted
+        # (and committed) before the portal is called.
+        runlimits.require_admitted(db, db.get(RfqRow, session.rfq_id).thread_id)
+        runlimits.spend(db, "bookings")
+        db.commit()
         if booking.status == "pending":
             booking.status = "submitted"
             repositories.append_event(
@@ -353,7 +361,10 @@ def retry_open_bookings(db: Session) -> int:
     for booking in rows:
         session = repositories.session_by_rfq(db, booking.rfq_id)
         if session is not None and not session.paused:
-            confirm_booking(db, session)
+            try:
+                confirm_booking(db, session)
+            except DomainError as exc:  # one refused booking must not stop the worker loop
+                log.warning("booking %s not retried: %s", booking.team_reference, exc.code)
     return len(rows)
 
 

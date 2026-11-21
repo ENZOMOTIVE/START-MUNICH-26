@@ -540,24 +540,18 @@ def _client(world: World) -> httpx.Client:
 
 
 class SandboxMailbox(LiveMailbox):
-    def __init__(self, world: World):
-        super().__init__(_client(world))
-
     def _http(self) -> httpx.Client:
-        return self._client  # in-memory transport; there is no socket behind it
+        return self._client  # the simulator: in memory, or its own container in the drill stack
 
 
 class SandboxBooking(PortalBooking):
-    def __init__(self, world: World):
-        super().__init__(_client(world))
-
     def _http(self) -> httpx.Client:
         return self._client
 
 
 class SandboxGateway:
-    def __init__(self, world: World):
-        self._client = _client(world)
+    def __init__(self, client: httpx.Client):
+        self._client = client
 
     def complete(self, prompt: str, model: str | None = None) -> dict:
         body = {"model": model or MODEL, "messages": [{"role": "user", "content": prompt}]}
@@ -570,8 +564,27 @@ class SandboxGateway:
         return {"simulated": True, "text": text, "model": MODEL, "usage": data.get("usage") or {}}
 
 
+def remote_adapters(base_url: str) -> dict:
+    """For a sandbox process whose simulator runs in another container (the drill stack)."""
+    # Longer than a mail send normally gets: a drill holds one answer back on purpose.
+    client = httpx.Client(base_url=base_url, timeout=15.0)
+    gateway, state = SandboxGateway(client), PortalState()
+
+    def rates() -> PortalClient:
+        http = httpx.AsyncClient(base_url=base_url, timeout=8.0)
+        return PortalClient(http=http, max_retries=1, state=state)
+
+    return {
+        "mailbox": SandboxMailbox(client),
+        "gateway": gateway,
+        "booking": SandboxBooking(client),
+        "rates": rates,
+        "extraction_model": {"gateway": gateway, "name": MODEL},
+    }
+
+
 def adapters(world: World) -> dict:
-    gateway = SandboxGateway(world)
+    gateway = SandboxGateway(_client(world))
 
     def rates() -> PortalClient:
         http = httpx.AsyncClient(base_url=BASE_URL, transport=httpx.MockTransport(world.handle))
@@ -579,9 +592,9 @@ def adapters(world: World) -> dict:
         return PortalClient(http=http, max_retries=1, state=state)
 
     return {
-        "mailbox": SandboxMailbox(world),
+        "mailbox": SandboxMailbox(_client(world)),
         "gateway": gateway,
-        "booking": SandboxBooking(world),
+        "booking": SandboxBooking(_client(world)),
         "rates": rates,
         "mail_scope": lambda: [str(m["id"]) for m in world.inbox],
         "extraction_model": {"gateway": gateway, "name": MODEL},

@@ -22,8 +22,9 @@ def _refuse(target) -> None:
     raise SandboxNetworkBlocked(f"sandbox blocked outbound network access to {target}")
 
 
-def install(database_url: str) -> None:
-    """Idempotent. Allows loopback, unix sockets and the database host only."""
+def install(database_url: str, simulator: str | None = None) -> None:
+    """Idempotent. Allows loopback, unix sockets, the database host and, in the drill stack,
+    the simulator container. Nothing else."""
     global _installed
     if _installed is not None:
         return
@@ -36,13 +37,16 @@ def install(database_url: str) -> None:
     db_host = urlsplit(database_url.replace("+psycopg", "")).hostname
     if db_host:
         names.add(db_host)
+    if simulator:
+        names.add(urlsplit(simulator).hostname)
     addresses = set(names)
 
     def allowed(address) -> bool:
         return not isinstance(address, tuple) or address[0] in addresses
 
     def getaddrinfo(host, *args, **kwargs):
-        if host not in names:
+        # asyncio resolves with the name as bytes; compare it as text either way.
+        if (host.decode() if isinstance(host, bytes) else host) not in names:
             _refuse(host)
         result = real_gai(host, *args, **kwargs)
         addresses.update(entry[4][0] for entry in result)

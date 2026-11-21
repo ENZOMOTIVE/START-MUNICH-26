@@ -36,7 +36,7 @@ def create_app() -> FastAPI:
         # Sandbox controls do not exist in any other mode, and this process cannot reach out.
         from app.api.sandbox import router as sandbox_router
 
-        netguard.install(settings.database_url)
+        netguard.install(settings.database_url, settings.sandbox_simulator())
         application.include_router(sandbox_router)
 
     @application.exception_handler(NotFoundError)

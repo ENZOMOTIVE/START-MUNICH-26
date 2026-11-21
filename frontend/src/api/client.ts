@@ -14,7 +14,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: {
       Accept: "application/json",
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
-      // Set once in the browser console: localStorage.setItem("operator_token", "<token>")
+      // Entered on the review page; kept in this browser only.
       ...(localStorage.getItem("operator_token")
         ? { "X-Operator-Token": localStorage.getItem("operator_token") as string }
         : {}),
@@ -86,6 +86,38 @@ export function resolveAction(id: string, actionId: string, sent: boolean): Prom
   return request(`/api/sessions/${id}/actions/${actionId}/resolve`, {
     method: "POST",
     body: JSON.stringify({ sent }),
+  });
+}
+
+export type ReviewQueue = {
+  sessions_total: number;
+  mail_total: number;
+  sessions: { id: string; stage: string; reason: string; paused: boolean }[];
+  mail: {
+    external_id: string;
+    sender: string;
+    subject: string;
+    kind: string | null;
+    unmatched: { kind: string; reason: string } | null;
+    tariff: { status: string; files: { filename: string; status: string }[] } | null;
+    bid: {
+      status: string;
+      reasons: string[];
+      carrier: string;
+      amount: string | null;
+      currency: string | null;
+    } | null;
+  }[];
+};
+
+export function getReview(): Promise<ReviewQueue> {
+  return request("/api/review");
+}
+
+export function resolveMail(externalId: string, approve: boolean): Promise<unknown> {
+  return request(`/api/review/mail/${externalId}/resolve`, {
+    method: "POST",
+    body: JSON.stringify({ approve }),
   });
 }
 

@@ -17,6 +17,7 @@ from app.core.config import get_settings
 from app.core.errors import DomainError
 from app.db import repositories
 from app.db.models import ActionIntentRow, RfqRow, SessionRow
+from app.platform import runlimits
 from app.platform.mailbox import MailboxError
 
 LAST_SEND = "last_send_ms"  # stored in the cursor table: time of the last send, in ms
@@ -76,12 +77,23 @@ def deliver_intent(
         if operator and not paused:
             raise DomainError("take_over_first", "pause the session before sending by hand")
     rfq = db.get(RfqRow, intent.rfq_id)
+    if rfq is not None:
+        # A bounded live run sends only for threads an operator admitted (RUN_LIMITS).
+        runlimits.require_admitted(db, rfq.thread_id)
     if intent.kind == "first_quote" and rfq is not None:
         expires = rfq.expires_at if rfq.expires_at.tzinfo else rfq.expires_at.replace(tzinfo=UTC)
         if clock.now() >= expires:
             # However this send was reached (retry, restart, sweep): no quote after the deadline.
             _record(db, intent, session, "failed", "send_failed", "request expired before sending")
             raise DomainError("expired")
+        answered = getattr(mailbox, "round_answered", None)
+        if answered is not None and answered(rfq.received_at):
+            # Only the first quote in a thread counts, and another sender of this team
+            # (another machine, another codebase) has already answered this request.
+            if session is not None:
+                session.exception = "answered_elsewhere"
+            _record(db, intent, session, "failed", "send_failed", "the board shows an answer")
+            raise DomainError("answered_elsewhere")
     settings = get_settings()
     if settings.live_allowed() and settings.send_min_interval_ms:
         # shortcut: two workers can read the same value and both send; add a row lock if more
@@ -90,6 +102,7 @@ def deliver_intent(
         if now_ms - repositories.get_cursor(db, LAST_SEND) < settings.send_min_interval_ms:
             raise DomainError("send_throttled")
         repositories.advance_cursor(db, LAST_SEND, now_ms)
+    runlimits.spend(db, "mails")  # an attempt, committed with the claim below
     payload = dict(intent.payload or {})
     payload["_sending_at"] = clock.now().isoformat()
     # The claim is one conditional UPDATE: of two senders that both read `pending` (two
