@@ -42,6 +42,11 @@ _MONEY = re.compile(
 )
 _CODE = re.compile(r"\b[A-Z]{3}\b")
 _ROUTE_WORD = re.compile(r"\b(?:to|from|via|destination|origin)\s+(?:is\s+)?([A-Z]{3})\b")
+_SERVICE = re.compile(
+    r"\b(?:express|urgent\w*|priority|fastest|faster|overnight|next[- ]day|economy|cheapest|"
+    r"slower|direct flight)\b",
+    re.IGNORECASE,
+)
 _CONDITION = re.compile(
     r"\b(?:if|unless|provided|only\s+(?:after|when|if)|but|however|instead|except|"
     r"as long as|subject to|chang\w+|condition\w*|before you book)\b",
@@ -114,6 +119,8 @@ def acceptance_problem(text, total, currency: str, origin: str, destination: str
         return "route_differs_from_quote"
     if _CONDITION.search(text):
         return "conditional_or_deferred"
+    if _SERVICE.search(text):
+        return "service_differs_from_quote"  # the quote fixed the service; naming one reopens it
     return None
 
 

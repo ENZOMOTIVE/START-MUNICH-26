@@ -170,6 +170,8 @@ class World:
         fault = self._fault("mailbox_send")
         if fault == "not_sent":
             raise httpx.ConnectError("sandbox: connection refused")
+        if fault == "429":  # over the send limit: nothing was sent, come back in 3 s
+            return httpx.Response(429, headers={"Retry-After": "3"}, json={"detail": "limit"})
         item = {
             "id": self._next_id(),
             "to": body.get("to"),

@@ -348,6 +348,11 @@ def _report(world: World, factory, state: dict, wall: float) -> dict:
     totals.update(
         stray_outbound=len(world.stray),
         portal_requests=sum(n for call, n in world.calls.items() if "/v1/portal/" in call),
+        portal_rate_reads=world.calls["GET /v1/portal/rates"],
+        portal_metadata_reads=world.calls["GET /v1/portal/ports"]
+        + world.calls["GET /v1/portal/brackets"],
+        attachment_reads=world.calls["GET /v1/mailbox/messages/{id}/attachments/{id}"],
+        priced_requests=sum(1 for r in requests.values() if "rates_loaded" in r["events"]),
         portal_cache_hits=world.portal_state.cache_hits,
         mailbox_polls=world.calls["GET /v1/mailbox/messages"],
         mails_sent=world.calls["POST /v1/mailbox/messages"],
@@ -498,6 +503,49 @@ def write_report(results: list[dict], out: Path) -> None:
     ] or ["None."]
     lines += ["", "## Counts across all scenarios (simulated)", ""]
     lines += [f"- {name.replace('_', ' ')}: {count}" for name, count in sorted(total.items())]
+    lines += [
+        "",
+        "## Request ledger",
+        "",
+        "Every simulated request and why it ended where it did.",
+        "",
+        "| Scenario | Request | Quoted | Accepted | Booked | Reason when not |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for r in results:
+        for key, q in r["requests"].items():
+            quoted, accepted = q["quote"] is not None, q["customer"]["outcome"] == "accepted"
+            booked = bool(q["booking"]) and q["booking"]["status"] == "confirmed"
+            if not quoted:
+                why = q["blocked_on"] or q["rfq_status"]
+            elif not accepted:
+                why = q["customer"]["reason"] or q["blocked_on"] or "customer did not reply"
+            elif not booked:
+                why = q["blocked_on"] or f"booking {(q['booking'] or {}).get('status')}"
+            else:
+                why = ""
+            mark = {True: "yes", False: "no"}
+            lines.append(
+                f"| `{r['scenario']}` | {key} | {mark[quoted]} | {mark[accepted]} | "
+                f"{mark[booked]} | {why} |"
+            )
+    priced = max(1, total["priced_requests"])
+    lines += [
+        "",
+        "## Calls by endpoint (simulated)",
+        "",
+        f"- Requests priced: {total['priced_requests']}",
+        f"- Portal rate reads: {total['portal_rate_reads']} "
+        f"({total['portal_rate_reads'] / priced:.1f} per priced request)",
+        f"- Portal lanes and weight-break reads: {total['portal_metadata_reads']} "
+        f"({total['portal_metadata_reads'] / priced:.1f} per priced request; "
+        f"{total['portal_cache_hits']} answered from cache)",
+        f"- Mail sends: {total['mails_sent']}; attachment reads: {total['attachment_reads']}",
+        f"- Mailbox reads: {total['mailbox_polls']} (the simulator polls every step; "
+        "not a live figure)",
+        f"- Booking requests: {total['booking_requests']} for {total['booked']} bookings",
+        f"- Model calls: {total['model_calls']} (fake model)",
+    ]
     lines += ["", "## Rejection reasons (local customer rules)", ""]
     lines += [f"- {reason}" for r in results for reason in r["rejection_reasons"]] or ["None."]
     lines += ["", "## Injected faults", ""]

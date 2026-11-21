@@ -194,7 +194,9 @@ def outbound(
                 kind=kind,
                 payload=payload,
                 workflow_status=workflow_status,
-                delivery_status="pending",
+                # In observation mode an action is a proposal: `observed` is never sent, and
+                # no later mode change turns it into `pending`.
+                delivery_status="observed" if get_settings().app_mode == "observe" else "pending",
                 simulated=True,
             )
             db.add(intent)

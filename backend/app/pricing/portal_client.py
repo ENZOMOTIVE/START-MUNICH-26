@@ -72,6 +72,21 @@ class PortalState:
         self.rate_remaining: int | None = None
         self.requests = 0
         self.cache_hits = 0
+        self.reserved = 0  # counted requests in flight
+        self.seen_at = 0.0  # when rate_remaining was last reported
+
+    def budget_spent(self) -> bool:
+        """True while the last reported remaining budget is fully promised.
+
+        shortcut: the portal reports no window end except on a 429, so a reported value is
+        trusted for 60 s; use a reset header if the portal ever sends one.
+        """
+        if self.rate_remaining is None:
+            return False
+        now = time.monotonic()
+        if self.rate_remaining <= 0 and self.window_reset and now >= self.window_reset:
+            return False  # a 429 closed the window and its Retry-After has passed
+        return now - self.seen_at < 60 and self.rate_remaining <= self.reserved
 
 
 _STATES: dict[str, PortalState] = {}
@@ -111,9 +126,6 @@ class PortalClient:
             max_wait_s,
             cache_ttl_s,
         )
-        # Caches and the rate-limit window live outside the transport, so they outlast the
-        # short-lived client (and event loop) that each priced request creates. A caller that
-        # brings its own transport gets its own state unless it passes one.
         if state is None:
             state = PortalState() if injected else shared_state(str(http.base_url))
         self.state = state
@@ -139,7 +151,12 @@ class PortalClient:
                         "rate_limited", f"budget exhausted, next window in {wait:.0f}s", wait
                     )
                 await asyncio.sleep(wait)
+            if counted and self.state.budget_spent():
+                # Every remaining call of this window is already promised to a request in
+                # flight (airlines are asked in parallel): refuse here instead of drawing a 429.
+                raise PortalError("rate_limited", "portal budget for this window is reserved")
             self.state.requests += 1
+            self.state.reserved += counted
             try:
                 r = await asyncio.wait_for(self.http.get(path, params=params), self.timeout_s)
             except TimeoutError:
@@ -150,7 +167,10 @@ class PortalClient:
                     await asyncio.sleep(0.5 * attempt)
                     continue
                 raise PortalError("http_error", f"{type(e).__name__}: {e}")
+            finally:
+                self.state.reserved -= counted
             if counted:
+                self.state.seen_at = time.monotonic()
                 lim, rem = (
                     r.headers.get("X-RateLimit-Limit"),
                     r.headers.get("X-RateLimit-Remaining"),

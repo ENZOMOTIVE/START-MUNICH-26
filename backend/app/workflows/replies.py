@@ -163,6 +163,7 @@ _NOT_AS_QUOTED = {
     "amount_differs_from_quote": "it names a different price from the one I quoted",
     "route_differs_from_quote": "it names a different route from the one I quoted",
     "conditional_or_deferred": "it adds a condition or asks me to wait",
+    "service_differs_from_quote": "it asks for a different service from the one I quoted",
 }
 
 

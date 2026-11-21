@@ -8,7 +8,7 @@ make the external send exactly-once.
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -63,6 +63,11 @@ def deliver_intent(
         raise DomainError("unknown_no_blind_resend")
     if intent.delivery_status == "confirmed":
         return intent
+    if intent.delivery_status == "observed":
+        raise DomainError("observation_only", "a proposal from observation mode is never sent")
+    not_before = (intent.payload or {}).get("_not_before")
+    if not_before and clock.now() < datetime.fromisoformat(not_before):
+        raise DomainError("send_throttled")  # the mailbox said when to come back (Retry-After)
     if session is not None:
         # Read the committed flag: an operator's pause must beat a stale copy in this session.
         paused = db.scalar(select(SessionRow.paused).where(SessionRow.id == session.id))
@@ -87,10 +92,18 @@ def deliver_intent(
         repositories.advance_cursor(db, LAST_SEND, now_ms)
     payload = dict(intent.payload or {})
     payload["_sending_at"] = clock.now().isoformat()
-    intent.payload = payload
-    flag_modified(intent, "payload")
-    intent.delivery_status = "sending"
+    # The claim is one conditional UPDATE: of two senders that both read `pending` (two
+    # workers, or the agent and an operator), exactly one changes the row and goes on.
+    claimed = db.execute(
+        update(ActionIntentRow)
+        .where(ActionIntentRow.id == intent.id, ActionIntentRow.delivery_status == "pending")
+        .values(delivery_status="sending", payload=payload)
+        .execution_options(synchronize_session=False)
+    ).rowcount
     db.commit()
+    db.refresh(intent)
+    if not claimed:
+        raise DomainError("send_in_progress")
     try:
         result = mailbox.send(intent.payload or {})
     except MailboxError as exc:
@@ -98,6 +111,10 @@ def deliver_intent(
             _record(db, intent, session, "UNKNOWN", "send_unknown", exc.detail)
             raise DomainError("unknown_no_blind_resend") from exc
         status = "failed" if exc.kind == "rejected" else "pending"
+        if exc.retry_after:
+            wait = clock.now() + timedelta(seconds=exc.retry_after)
+            intent.payload = {**(intent.payload or {}), "_not_before": wait.isoformat()}
+            flag_modified(intent, "payload")
         _record(db, intent, session, status, "send_failed", f"{exc.kind}: {exc.detail}")
         raise DomainError("send_failed") from exc
     simulated = not get_settings().live_allowed()

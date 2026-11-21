@@ -10,10 +10,13 @@ from pathlib import Path
 
 import httpx
 import pytest
+from app.core.config import Settings
+from app.core.errors import DomainError, LiveActionsDisabled
 from app.db.models import JobRow
 from app.db.session import get_session_factory
 from app.platform import jobs
 from app.platform.mailbox import poll_mailbox_once
+from app.platform.readonly import ObservationOnly, ReadOnlyTransport
 from app.pricing.fixtures import candidates_from_fixtures
 from app.pricing.portal_client import PortalClient, PortalError, PortalState
 from app.sandbox import runner
@@ -35,6 +38,16 @@ PORTAL_500 = {
 }
 
 
+class _Settings:
+    """Stands in for get_settings() where one value has to differ."""
+
+    def __init__(self, **values):
+        self.__dict__.update(values)
+
+    def live_allowed(self) -> bool:
+        return False
+
+
 # ---------- acceptance must match the quote exactly ----------
 
 
@@ -49,6 +62,8 @@ PORTAL_500 = {
             "route_differs_from_quote",
         ),
         ("We accept your quote of USD 500.", "amount_differs_from_quote"),
+        ("We accept your EUR 500 quote with express service.", "service_differs_from_quote"),
+        ("Accepted, please send it overnight.", "service_differs_from_quote"),
         ("We accept your EUR 500 quote.", None),
         ("We accept the quote. Please go ahead and book.", None),
     ],
@@ -282,3 +297,224 @@ def test_every_customer_mail_follows_the_voice_guide():
         assert not [phrase for phrase in banned if phrase in body.lower()], mail["purpose"]
     hold = mails[4]["body"]
     assert "have not booked anything yet" in hold and "EUR" not in hold
+
+
+# ---------- observation mode: reads only ----------
+
+OBSERVE = {
+    "app_mode": "observe",
+    "database_url": "postgresql+psycopg://u:p@127.0.0.1:5434/fiveu_observe",
+}
+
+
+def test_observation_mode_refuses_unsafe_configuration():
+    assert Settings(_env_file=None, **OBSERVE).live_allowed() is False
+    for bad, message in (
+        ({"live_actions_enabled": True}, "LIVE_ACTIONS_ENABLED must be false"),
+        ({"llm_mode": "gateway"}, "no paid calls"),
+        ({"database_url": "postgresql+psycopg://u:p@127.0.0.1:5433/fiveu"}, "its own database"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            Settings(_env_file=None, **{**OBSERVE, **bad})
+
+
+def test_read_only_transport_refuses_every_write_before_dispatch():
+    reached = []
+
+    def remote(request):
+        reached.append(request.method)
+        return httpx.Response(200, json={"messages": []})
+
+    transport = ReadOnlyTransport(httpx.MockTransport(remote))
+    with httpx.Client(base_url="https://sandbox.invalid", transport=transport) as client:
+        assert client.get("/v1/mailbox/messages").status_code == 200
+        for method, path in (
+            ("POST", "/v1/mailbox/messages"),
+            ("POST", "/v1/portal/bookings"),
+            ("PUT", "/v1/mailbox/webhook"),
+            ("DELETE", "/v1/mailbox/messages/1"),
+            ("POST", "/v1/gateway/chat/completions"),
+            ("GET", "/v1/gateway/models"),
+        ):
+            with pytest.raises(ObservationOnly):
+                client.request(method, path)
+    assert reached == ["GET"] and len(transport.refused) == 6
+
+
+def test_observation_mode_reads_mail_but_cannot_send_book_or_call_a_model(monkeypatch):
+    import app.platform.booking as booking
+    import app.platform.gateway as gateway
+    import app.platform.mailbox as mailbox
+
+    observe = Settings(_env_file=None, **OBSERVE)
+    for module in (mailbox, booking, gateway):
+        monkeypatch.setattr(module, "get_settings", lambda: observe)
+    reached = []
+
+    def remote(request):
+        reached.append(f"{request.method} {request.url.path}")
+        return httpx.Response(200, json={"messages": [], "next_since_id": 0})
+
+    client = httpx.Client(base_url="https://sandbox.invalid", transport=httpx.MockTransport(remote))
+    box = mailbox.LiveMailbox(client)
+    assert box.poll(0)["messages"] == []
+    with pytest.raises(ObservationOnly):
+        box.send({"to": "customer@example.com", "subject": "Quote", "body": "EUR 1.00"})
+    with pytest.raises(LiveActionsDisabled):
+        booking.PortalBooking(client).book("R-1", "TM-1")
+    with pytest.raises(LiveActionsDisabled):
+        gateway.LiveGateway(client=client).complete("hello", "any-model")
+    assert reached == ["GET /v1/mailbox/messages"]
+
+
+def test_observed_proposals_are_never_sent_even_after_the_mode_changes(db, monkeypatch):
+    import app.workflows.rfq as rfq_flow
+    from app.db.models import ActionIntentRow
+    from app.platform.outbox import deliver_intent, deliver_pending
+
+    with monkeypatch.context() as observing:
+        observing.setattr(rfq_flow, "get_settings", lambda: _Settings(app_mode="observe"))
+        result = runner.run("happy_path", 42)
+    assert result["totals"]["mails_sent"] == 0  # the quote was proposed, not sent
+    proposal = (
+        db.query(ActionIntentRow)
+        .filter(ActionIntentRow.delivery_status == "observed")
+        .order_by(ActionIntentRow.created_at.desc())
+        .first()
+    )
+    assert proposal.kind == "first_quote" and "EUR 585.00" in proposal.payload["body"]
+
+    class Mailbox:
+        sent = 0
+
+        def send(self, payload):
+            self.sent += 1
+            return {"id": 1}
+
+    live = Mailbox()  # the mode is no longer observe here
+    deliver_pending(db, live, [proposal.payload["thread_id"]])
+    with pytest.raises(DomainError) as refused:
+        deliver_intent(db, proposal, live)
+    assert refused.value.code == "observation_only" and live.sent == 0
+    assert proposal.delivery_status == "observed"
+
+
+# ---------- one worker, one budget ----------
+
+
+def test_a_second_worker_refuses_to_start(db):
+    from app.workers.main import WORKER_LOCK, claim_single_worker
+    from sqlalchemy import text
+
+    first = claim_single_worker()
+    try:
+        with pytest.raises(SystemExit, match="run exactly one"):
+            claim_single_worker()
+    finally:
+        first.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": WORKER_LOCK})
+        first.close()
+
+
+def test_parallel_requests_never_exceed_the_reported_portal_budget():
+    sent = []
+
+    def remote(request):
+        sent.append(request.url.params["airline"])
+        headers = {"X-RateLimit-Limit": "10", "X-RateLimit-Remaining": str(2 - len(sent))}
+        return httpx.Response(200, headers=headers, json={"rate_id": "R-1"})
+
+    async def three_at_once():
+        http = httpx.AsyncClient(base_url="https://sandbox.invalid",
+                                 transport=httpx.MockTransport(remote))
+        state = PortalState()
+        state.rate_remaining, state.seen_at = 2, time.monotonic()
+        async with PortalClient(http=http, state=state) as client:
+            calls = (client.rate("FRA", "ORD", code, 300, 0) for code in ("AA", "BB", "CC"))
+            return await asyncio.gather(*calls, return_exceptions=True)
+
+    results = asyncio.run(three_at_once())
+    refused = [r for r in results if isinstance(r, PortalError)]
+    assert len(sent) == 2 and [r.kind for r in refused] == ["rate_limited"]
+
+
+def test_two_senders_of_one_action_deliver_it_once(db):
+    import threading
+
+    from app.core import clock
+    from app.db.models import ActionIntentRow
+    from app.platform.outbox import deliver_intent
+
+    case = scenario("never_sent", [rfq()], {}, faults={"mailbox_send": ["not_sent"] * 40})
+    runner.run(case, 42, until_s=2)
+    intent_id = (
+        db.query(ActionIntentRow.id)
+        .filter(ActionIntentRow.kind == "first_quote", ActionIntentRow.delivery_status == "pending")
+        .order_by(ActionIntentRow.created_at.desc())
+        .first()[0]
+    )
+    db.commit()
+
+    class Mailbox:
+        sent = 0
+
+        def send(self, payload):
+            Mailbox.sent += 1
+            return {"id": 7}
+
+    start, outcomes = threading.Barrier(2), []
+
+    def sender():
+        with get_session_factory()() as own:
+            intent = own.get(ActionIntentRow, intent_id)
+            assert intent.delivery_status == "pending"  # both read it before either claims
+            start.wait()
+            try:
+                deliver_intent(own, intent, Mailbox())
+                own.commit()
+                outcomes.append("sent")
+            except DomainError as exc:
+                own.commit()
+                outcomes.append(exc.code)
+
+    clock.set_clock(lambda: datetime(2026, 11, 21, 9, 0, 5, tzinfo=UTC))  # inside the deadline
+    try:
+        threads = [threading.Thread(target=sender) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    finally:
+        clock.set_clock(None)
+    assert sorted(outcomes) == ["send_in_progress", "sent"] and Mailbox.sent == 1
+
+
+# ---------- other seeds and unseen wording ----------
+
+
+def test_every_scenario_passes_on_other_seeds(db):
+    from app.sandbox.scenarios import SCENARIOS
+
+    failed = []
+    for seed in (7, 99, 2026):
+        for name in SCENARIOS:
+            result = runner.run(name, seed)
+            failed += [(name, seed, c) for c in result["checks"] if not c["passed"]]
+    assert not failed
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Kindly quote 300kg, 1.2cbm, ORD ex FRA.",
+        "Rate request: FRA → ORD, 300 kgs, 1.2 m3",
+        "Need a price for 0.3 tonnes from Frankfurt (FRA) to Chicago (ORD), 1.2 cubic metres.",
+        "Hi team,\nour shipment: 300 KG / 1,2 CBM\nRoute FRA-ORD\nPlease send your best rate.\nTom",
+        "Guten Tag, bitte um ein Angebot: 300 kg, 1,2 cbm, von FRA nach ORD. Danke",
+        "pls quote\n\ndest: ORD\norigin: FRA\ngross weight: 300 kg\nvolume: 1.2 cbm",
+    ],
+)
+def test_unseen_wording_is_read_and_quoted_the_same(body, db):
+    request = runner.run(scenario("wording", [rfq(body=body)], {}), 42)["requests"]["rfq1"]
+    assert request["extracted"]["method"] == "rules"
+    assert (request["extracted"]["origin"], request["extracted"]["destination"]) == ("FRA", "ORD")
+    assert request["quote"]["total"] == "585.00" and request["stage"] == "booked"

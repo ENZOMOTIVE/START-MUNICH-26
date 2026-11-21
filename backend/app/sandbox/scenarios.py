@@ -352,6 +352,23 @@ _ALL = [
         title="Quote sent but the acknowledgement is lost: stays UNKNOWN, never resent",
     ),
     scenario(
+        "send_rate_limited",
+        [rfq()],
+        {
+            # The mailbox answers 429 with Retry-After: 3. Nothing was sent, so the same quote
+            # goes out once, no earlier than three seconds later.
+            "rfq1": {
+                **BOOKED,
+                **BRAVO,
+                "customer.priced_messages": 1,
+                "quote_latency_s": (">=", 3),
+            },
+            "_totals": {"duplicate_quotes": 0, "unknown_sends": 0},
+        },
+        faults={"mailbox_send": ["429"]},
+        title="Mailbox says 429 with Retry-After: the quote waits and is sent once",
+    ),
+    scenario(
         "booking_retry",
         [rfq()],
         {
@@ -686,9 +703,11 @@ _ALL = [
         {
             "rfq1": {
                 **BOOKED,
-                # Elbflug's tariff price (621.00, not hand-checked) is below Yellowtail's
-                # hand-worked 990.00 for this lane, so the cheapest tariff offer is Elbflug's.
+                # Worked by hand from Elbflug's tariff sheet, origin FRA, row DFW: 300 x 1.19 =
+                # 357.00, fuel 300 x 0.74 = 222.00, security 300 x 0.14 = 42.00, total 621.00
+                # (see tests/sandbox/test_pricing_oracle.py). Yellowtail's 990.00 is higher.
                 "quote.carrier": "Elbflug Air Freight",
+                "quote.total": "621.00",
                 "booking.portal_requests": 0,
                 "outbound": ["first_quote", "booking_submitted", "booking_confirmed"],
             },

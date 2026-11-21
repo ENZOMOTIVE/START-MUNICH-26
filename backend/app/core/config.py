@@ -18,7 +18,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_mode: Literal["demo", "live", "sandbox"] = "demo"
+    # observe: read the real mailbox, send and book nothing, propose actions that cannot run.
+    app_mode: Literal["demo", "live", "sandbox", "observe"] = "demo"
     live_actions_enabled: bool = False
     llm_mode: Literal["fake", "gateway"] = "fake"
     simulation_seed: int = 42
@@ -44,6 +45,22 @@ class Settings(BaseSettings):
     send_min_interval_ms: int = 1100
     # When set, pause, resume and sandbox runs need the header X-Operator-Token.
     operator_token: str = ""
+
+    @model_validator(mode="after")
+    def _observe_is_read_only(self):
+        if self.app_mode != "observe":
+            return self
+        problems = []
+        if self.live_actions_enabled:
+            problems.append("LIVE_ACTIONS_ENABLED must be false")
+        if self.llm_mode != "fake" or self.router_backend != "keyword":
+            problems.append("LLM_MODE must be fake and ROUTER_BACKEND keyword (no paid calls)")
+        database = urlsplit(self.database_url.replace("+psycopg", "")).path.lstrip("/")
+        if "observe" not in database:
+            problems.append(f"DATABASE_URL names '{database}'; observation needs its own database")
+        if problems:
+            raise ValueError("observation mode refused to start: " + "; ".join(problems))
+        return self
 
     @model_validator(mode="after")
     def _sandbox_fails_closed(self):

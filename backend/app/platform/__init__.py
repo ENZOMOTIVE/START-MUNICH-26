@@ -24,6 +24,9 @@ def get_adapters() -> dict:
     settings = get_settings()
     if settings.app_mode == "sandbox":
         raise DomainError("sandbox_adapters_missing", "sandbox mode has no simulator installed")
+    if settings.app_mode == "observe":
+        # Mailbox reads only. No booking adapter and no model: nothing here can write or spend.
+        return {"mailbox": LiveMailbox(), "gateway": FakeGateway()}
     if settings.live_allowed():
         return {"mailbox": LiveMailbox(), "gateway": LiveGateway(), "booking": PortalBooking()}
     return {"mailbox": FakeMailbox(), "gateway": FakeGateway()}

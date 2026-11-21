@@ -19,6 +19,7 @@ QtyStr = Annotated[
 class DeliveryStatus(StrEnum):
     PENDING = "pending"
     SENDING = "sending"
+    OBSERVED = "observed"
     CONFIRMED = "confirmed"
     FAILED = "failed"
     UNKNOWN = "UNKNOWN"

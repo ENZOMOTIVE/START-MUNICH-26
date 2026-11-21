@@ -63,6 +63,43 @@ def test_totals_match_hand_calculation(lane, kg, cbm, expected, working):
     assert price_lane(lane, Decimal(kg), Decimal(cbm)).total == Decimal(expected), working
 
 
+def test_elbflug_fra_dfw_matches_a_calculation_from_its_own_tariff_sheet():
+    """FRA-DFW, 300 kg, 1.2 cbm, taken cell by cell from the source spreadsheet.
+
+    Chargeable weight: max(300, 1.2 x 167 = 200.4) = 300 kg, which is exactly the 300 kg break.
+    Freight 300 x 1.19 = 357.00 (above the 108.00 minimum); fuel 300 x 0.74 = 222.00;
+    security 300 x 0.14 = 42.00; total 621.00. Billing at the 500 kg break would cost
+    500 x 0.92 + 500 x 0.88 = 900.00, so it does not apply.
+    """
+    openpyxl = pytest.importorskip("openpyxl")
+    sheet = openpyxl.load_workbook(
+        KIT / "elbflug-air-freight-tariff-2026-11.xlsx", data_only=True
+    ).active
+    rows = [[str(c) for c in row if c is not None] for row in sheet.iter_rows(values_only=True)]
+    start = rows.index(["Origin: FRA"])
+    end = next(i for i in range(start + 1, len(rows)) if rows[i][:1] and "Origin:" in rows[i][0])
+    header = rows[start + 1]
+    dfw = next(row for row in rows[start:end] if row[:1] == ["DFW"])
+    cell = dict(zip(header, dfw, strict=True))
+    assert (cell["Transit"], cell["Minimum"], cell["from 300 kg"]) == ("3", "108,00", "1,19")
+    assert cell["from 500 kg"] == "0,92"
+    assert ["FRA-DFW: fuel 0,74 per kg, security 0,14 per kg"] in rows
+
+    def money(text):
+        return Decimal(text.replace(",", "."))
+
+    kg = max(Decimal("300"), Decimal("1.2") * 167)
+    freight = max(money(cell["Minimum"]), kg * money(cell["from 300 kg"]))
+    expected = freight + kg * Decimal("0.74") + kg * Decimal("0.14")
+    assert (kg, freight, expected) == (Decimal("300"), Decimal("357.00"), Decimal("621.00"))
+
+    elbflug = next(
+        x for x in TariffBook.from_snapshot().lanes("FRA", "DFW")
+        if x.carrier == "Elbflug Air Freight"
+    )
+    assert price_lane(elbflug, Decimal("300"), Decimal("1.2")).total == expected
+
+
 def test_pickup_is_charged_exactly_once_and_required_when_asked(lane):
     request = PriceRequest(
         "ORD", Decimal("300"), Decimal("1.0"), "FRA", "60", "cheapest", NOW.date()
