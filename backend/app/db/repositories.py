@@ -87,7 +87,7 @@ def session_by_thread(db: Session, thread_id: str) -> SessionRow | None:
         .join(RfqRow, RfqRow.id == SessionRow.rfq_id)
         .where(RfqRow.thread_id == thread_id)
         .order_by(SessionRow.created_at.desc())
-    ).scalar_one_or_none()
+    ).scalars().first()
 
 
 def first_quote_intent(db: Session, rfq_id: UUID) -> ActionIntentRow | None:
