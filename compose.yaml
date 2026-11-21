@@ -1,0 +1,95 @@
+# Local demo stack. make down must NOT pass -v; fiveu_pgdata is kept on purpose.
+# Published ports are loopback-only.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fiveu
+      POSTGRES_PASSWORD: fiveu
+      POSTGRES_DB: fiveu
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - fiveu_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fiveu -d fiveu"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+    command:
+      [
+        "sh",
+        "-c",
+        "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000",
+      ]
+    env_file:
+      - .env
+    environment:
+      APP_MODE: demo
+      LIVE_ACTIONS_ENABLED: "false"
+      DATABASE_URL: postgresql+psycopg://fiveu:fiveu@postgres:5432/fiveu
+      FIXTURES_DIR: /fixtures
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./fixtures:/fixtures:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://127.0.0.1:8000/health/live >/dev/null || python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+
+  worker:
+    build:
+      context: ./backend
+    command: ["python", "-m", "app.workers.main"]
+    env_file:
+      - .env
+    environment:
+      APP_MODE: demo
+      LIVE_ACTIONS_ENABLED: "false"
+      DATABASE_URL: postgresql+psycopg://fiveu:fiveu@postgres:5432/fiveu
+      FIXTURES_DIR: /fixtures
+    volumes:
+      - ./fixtures:/fixtures:ro
+    depends_on:
+      api:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      APP_MODE: demo
+      LIVE_ACTIONS_ENABLED: "false"
+    ports:
+      - "127.0.0.1:5173:5173"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:5173 >/dev/null 2>&1 || exit 0",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  fiveu_pgdata:
