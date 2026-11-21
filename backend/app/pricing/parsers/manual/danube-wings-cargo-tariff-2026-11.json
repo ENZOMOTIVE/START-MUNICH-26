@@ -1,0 +1,157 @@
+{
+ "_note": "Hand transcription of the Danube Wings JPG scans. Trusted ONLY for the exact image checksums below; used as cross-check / fallback for cells OCR cannot read confidently.",
+ "airline": "Danube Wings Cargo",
+ "currency": "EUR",
+ "valid_from": "1 November 2026",
+ "valid_to": "30 November 2026",
+ "source_checksums": {
+  "danube-wings-cargo-tariff-2026-11-p1.jpg": "dd145e8ed92c7dd03125416245415ed244327ad590f0dc7c27b9c16d2f687146",
+  "danube-wings-cargo-tariff-2026-11-p2.jpg": "56647a5fb11ce13b662edab41841628d6fb46c023615bf9f3b25989a83f5ce34"
+ },
+ "lanes": {
+  "CGN-SYD": {
+   "transit_days": 4,
+   "min_charge": "134.00",
+   "breaks": {
+    "0": "6.28",
+    "45": "5.34",
+    "100": "4.28",
+    "300": "3.89",
+    "500": "3.27",
+    "1000": "2.84"
+   },
+   "surcharges": {
+    "fuel_per_kg": "1.13",
+    "security_per_kg": "0.23"
+   }
+  },
+  "DUS-MEX": {
+   "transit_days": 5,
+   "min_charge": "101.00",
+   "breaks": {
+    "0": "3.02",
+    "45": "2.36",
+    "100": "1.89",
+    "300": "1.57",
+    "500": "1.32",
+    "1000": "1.00"
+   },
+   "surcharges": {
+    "fuel_per_kg": "0.74",
+    "security_per_kg": "0.24"
+   }
+  },
+  "DUS-SYD": {
+   "transit_days": 5,
+   "min_charge": "110.00",
+   "breaks": {
+    "0": "5.78",
+    "45": "4.45",
+    "100": "3.92",
+    "300": "2.90",
+    "500": "2.20",
+    "1000": "1.89"
+   },
+   "surcharges": {
+    "fuel_per_kg": "0.69",
+    "security_per_kg": "0.16"
+   }
+  },
+  "DUS-YYZ": {
+   "transit_days": 4,
+   "min_charge": "62.00",
+   "breaks": {
+    "0": "3.08",
+    "45": "2.62",
+    "100": "2.07",
+    "300": "1.61",
+    "500": "1.22",
+    "1000": "0.96"
+   },
+   "surcharges": {
+    "fuel_per_kg": "0.88",
+    "security_per_kg": "0.21"
+   }
+  },
+  "FRA-DXB": {
+   "transit_days": 2,
+   "min_charge": "138.86",
+   "breaks": {
+    "0": "2.90",
+    "45": "2.23",
+    "100": "2.05",
+    "300": "1.66",
+    "500": "1.45",
+    "1000": "1.33"
+   },
+   "surcharges": {
+    "fuel_per_kg": "1.12",
+    "security_per_kg": "0.22"
+   }
+  },
+  "FRA-EZE": {
+   "transit_days": 2,
+   "min_charge": "126.00",
+   "breaks": {
+    "0": "4.57",
+    "45": "3.34",
+    "100": "2.74",
+    "300": "2.52",
+    "500": "1.92",
+    "1000": "1.48"
+   },
+   "surcharges": {
+    "fuel_per_kg": "1.06",
+    "security_per_kg": "0.21"
+   }
+  },
+  "MUC-JNB": {
+   "transit_days": 7,
+   "min_charge": "105.00",
+   "breaks": {
+    "0": "3.74",
+    "45": "2.81",
+    "100": "2.19",
+    "300": "1.62",
+    "500": "1.39",
+    "1000": "1.22"
+   },
+   "surcharges": {
+    "fuel_per_kg": "0.85",
+    "security_per_kg": "0.24"
+   }
+  },
+  "MUC-TPE": {
+   "transit_days": 5,
+   "min_charge": "69.00",
+   "breaks": {
+    "0": "4.10",
+    "45": "3.73",
+    "100": "3.21",
+    "300": "2.57",
+    "500": "2.36",
+    "1000": "2.03"
+   },
+   "surcharges": {
+    "fuel_per_kg": "1.15",
+    "security_per_kg": "0.21"
+   }
+  },
+  "STR-SGN": {
+   "transit_days": 5,
+   "min_charge": "83.00",
+   "breaks": {
+    "0": "4.63",
+    "45": "4.21",
+    "100": "3.45",
+    "300": "2.93",
+    "500": "2.40",
+    "1000": "2.18"
+   },
+   "surcharges": {
+    "fuel_per_kg": "1.09",
+    "security_per_kg": "0.11"
+   }
+  }
+ }
+}

@@ -4,15 +4,15 @@
   "sender": "shipper@example.com",
   "recipient": "desk@example.com",
   "subject": "RFQ FRA-LAX",
-  "body": "Please quote RFQ FRA to LAX 500kg",
+  "body": "Please quote RFQ FRA to LAX 250kg",
   "classification": "rfq",
   "rfq": {
     "origin": "FRA",
     "destination": "LAX",
-    "weight_kg": "500",
-    "volume_m3": "2.5",
-    "pickup_required": false,
-    "pickup_zone": null,
+    "weight_kg": "250",
+    "volume_m3": "1.2",
+    "pickup_required": true,
+    "pickup_zone": "60",
     "service_intent": "cheapest"
   }
 }
