@@ -140,6 +140,20 @@ def assess(db: Session, root: MessageRow) -> dict:
         method = "preset"
     else:
         merged = merge([(m.subject, reply_text(m.body)) for m in mails])
+        if merged["missing"]:
+            # "All details are in the attached PDF": read the files that are not DG papers too.
+            merged = merge(
+                [
+                    (
+                        m.subject,
+                        "\n".join(
+                            [d.get("text", "") for d in documents.collect(db, m) if not d["kinds"]]
+                            + [reply_text(m.body)]
+                        ),
+                    )
+                    for m in mails
+                ]
+            )
         fields, notes, method = merged["fields"], merged["notes"], "rules"
         model = get_adapters().get("extraction_model")
         gaps = [name for name in REQUIRED if name not in fields]
@@ -472,7 +486,8 @@ def _cross_check(db: Session, session: SessionRow, root: MessageRow, fields: dic
     repositories.append_event(
         db, session.id, "model_check", {"differences": differences, "simulated": False}
     )
-    if differences:
+    # With no operator hold nobody would resume the session: the rules' reading stands at once.
+    if differences and get_settings().hold_new_requests:
         session.paused, session.exception = True, "extraction_needs_review"
         db.flush()
         raise DomainError("session_paused")

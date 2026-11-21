@@ -103,3 +103,30 @@ def test_two_different_postcodes_are_not_guessed():
     fields = extract("Quote to ORD", "Pickup at 81311 Munich or 60504 Frankfurt, 100 kg")["fields"]
     assert fields.get("pickup_required") is True
     assert "pickup_zone" not in fields and "origin" not in fields
+
+
+def test_lots_are_added_up_to_one_consignment():
+    """Round 62 was quoted on lot 1 alone and refused as too low."""
+    mixed = extract(
+        "",
+        "Fastest option to SCL, pickup at our site in 53521 (Bonn).\n\n"
+        "Lot 1: 1 carton, together 465 kg gross (404 kg net), together 3.87 cbm\n"
+        "Lot 2: 3 pallets, each 160 kg gross (142 kg net), each 100 x 60 x 46 cm\n"
+        "Lot 3: 3 drums, each 59 kg gross (55 kg net), each 110 x 110 x 128 cm\n",
+    )["fields"]
+    assert (mixed["weight_kg"], mixed["volume_m3"]) == ("1122", "9.344")
+    plain = extract(
+        "",
+        "Cheapest option from MUC to CAI.\n"
+        "Lot 1: 9 pieces, 345 kg gross, 0.58 cbm\nLot 2: 1 piece, gross weight 141 kg, volume 2.04 cbm",
+    )["fields"]
+    assert (plain["weight_kg"], plain["volume_m3"]) == ("486", "2.620")
+
+
+def test_a_un_number_in_a_packing_list_asks_for_the_dangerous_goods_papers():
+    """Round 61: the mail said "general cargo, non-dangerous", the packing list UN1760."""
+    from app.workflows.extract import assess_dg
+
+    packing_list = {"filename": "PL.xlsx", "readable": True, "kinds": [], "un_numbers": ["UN1760"]}
+    dg = assess_dg([("4 pieces of cleaning agent. General cargo, non-dangerous.", [packing_list])])
+    assert dg["blocked"] and dg["signals"] == ["UN1760"] and dg["docs_missing"]
