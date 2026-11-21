@@ -20,6 +20,7 @@ frontend/openapi.json
 frontend/.vite/
 *.egg-info/
 *.log
+.mailbox-state/
 .DS_Store
 backend/.venv/
 frontend/.vite/
