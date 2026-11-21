@@ -114,19 +114,24 @@ def final_quote(
     )
 
 
-def pickup_enquiry(zone, airport, weight_kg, volume_m3, ref: str) -> dict:
-    """To a trucker. `ref` in the subject is how the reply is matched back to the request."""
+def pickup_enquiry(zone, airport, weight_kg, volume_m3, ref: str, postcode=None) -> dict:
+    """To a trucker. `ref` in the subject is how the reply is matched back to the request.
+
+    Live truckers price by the full postcode: asked for "zone 80" they answered that they
+    do not serve "pickup postcode 80". The zone is only named when no postcode is known.
+    """
     cargo = f"{weight_kg} kg" + (f", {volume_m3} cbm" if volume_m3 else "")
+    place = f"postcode {postcode}" if postcode else f"pickup zone {zone}"
     body = "\n\n".join(
         [
             "Hello,",
             "Please send us your price for one collection:",
-            f"From: pickup zone {zone}\nTo: {airport} airport\nCargo: {cargo}",
+            f"From: {place}\nTo: {airport} airport\nCargo: {cargo}",
             "Please reply to this email with one all-in price and its currency.",
             SIGNATURE,
         ]
     )
-    subject = f"Pickup enquiry: zone {zone} to {airport} [ref {ref}]"
+    subject = f"Pickup enquiry: {postcode or f'zone {zone}'} to {airport} [ref {ref}]"
     return {"purpose": "carrier_enquiry", "subject": subject, "body": body}
 
 

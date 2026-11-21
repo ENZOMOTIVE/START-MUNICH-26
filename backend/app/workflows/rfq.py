@@ -34,6 +34,7 @@ from app.workflows.extract import (
     merge,
     model_check,
     model_fill,
+    pickup_postcode,
     truckers_for_zone,
 )
 from app.workflows.selection import choose_offer_with_evidence
@@ -504,15 +505,55 @@ def pickup_bid(db: Session, session: SessionRow, rfq: RfqRow) -> PickupQuote | N
     )
 
 
+def pickup_answers_in(db: Session, session: SessionRow, rfq: RfqRow) -> bool:
+    """Whether to price the pickup now. By default the first usable bid is enough. With
+    PICKUP_WAIT_SECONDS set, wait until every trucker we asked has answered (a price or a
+    refusal), or until that many seconds have passed since the enquiries went out."""
+    wait = get_settings().pickup_wait_seconds
+    if not wait:
+        return True
+    events = repositories.events_for(db, session.id)
+    answered = {
+        e.payload.get("carrier")
+        for e in events
+        if e.type == "carrier_bid" and str(e.payload.get("kind") or "").startswith("pickup")
+    }
+    asked = db.scalars(
+        select(ActionIntentRow).where(
+            ActionIntentRow.rfq_id == rfq.id,
+            ActionIntentRow.action_key.like("enquiry:%"),
+            ActionIntentRow.delivery_status == "confirmed",
+        )
+    ).all()
+    sent = [_aware(e.occurred_at) for e in events if e.type == "carrier_enquiry_sent"]
+    waited = bool(sent) and clock.now() - min(sent) >= timedelta(seconds=wait)
+    return len(answered) >= len(asked) or waited
+
+
+def _reprice(db: Session, session: SessionRow, rfq: RfqRow) -> None:
+    root = db.get(MessageRow, rfq.message_id)
+    found = assess(db, root)
+    if not found["missing"]:
+        found["fields"] = _validated(found["fields"])
+    advance(db, session, rfq, root, found)
+
+
 def _ask_truckers(db: Session, session: SessionRow, rfq: RfqRow) -> bool:
     """Ask up to three truckers that serve the zone. False when there is nobody to ask."""
-    truckers = truckers_for_zone(str(rfq.pickup_zone))[:3]
+    truckers = truckers_for_zone(str(rfq.pickup_zone))[: get_settings().pickup_max_truckers]
     if not truckers:
         return False
     airport = airport_for_zone(rfq.pickup_zone) or rfq.origin
     volume = _weight(rfq.volume_m3) if rfq.volume_m3 is not None else None
+    mails = customer_mails(db, db.get(MessageRow, rfq.message_id))
+    text = "\n".join(f"{reply_text(m.body)}\n{m.subject}" for m in mails)
     mail = replies.pickup_enquiry(
-        rfq.pickup_zone, airport, _weight(rfq.weight_kg), volume, str(rfq.id)[:13]
+        rfq.pickup_zone,
+        airport,
+        _weight(rfq.weight_kg),
+        volume,
+        str(rfq.id)[:13],
+        pickup_postcode(text, rfq.pickup_zone),
     )
     asked = _enquire(db, rfq, "enquiry", truckers, mail)
     session.stage = "pricing"
@@ -570,6 +611,19 @@ def close_overdue_sourcing(db: Session, margin: timedelta = timedelta(seconds=60
     ).all():
         rfq = db.get(RfqRow, session.rfq_id)
         if rfq is None or rfq.status != "pending":
+            continue
+        if (
+            session.exception == WAITING_FOR_PICKUP
+            and get_settings().pickup_wait_seconds
+            and not session.paused
+            and pickup_bid(db, session, rfq) is not None
+            and pickup_answers_in(db, session, rfq)
+        ):
+            # The wait for the remaining truckers is over: price with the bids on file.
+            try:
+                _reprice(db, session, rfq)
+            except DomainError:
+                pass  # recorded on the session by the step that refused
             continue
         if clock.now() < _aware(rfq.expires_at) - margin:
             waiting += 1

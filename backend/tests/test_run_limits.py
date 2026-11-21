@@ -1,12 +1,21 @@
 """Bounded live run: allowlist, counters, stop switch, model reservation, booking re-post."""
 
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from app.core.config import get_settings
 from app.core.errors import DomainError
-from app.db.models import ActionIntentRow, BookingRow, RfqRow, SessionRow
+from app.db.models import (
+    ActionIntentRow,
+    BookingRow,
+    MessageRow,
+    QuoteDecisionRow,
+    RateCandidateRow,
+    RfqRow,
+    SessionRow,
+)
 from app.platform import FakeGateway, FakeMailbox, outbox, runlimits, set_adapters
 from app.platform.outbox import deliver_intent
 from app.workflows.booking import confirm_booking
@@ -71,6 +80,31 @@ def test_model_calls_are_reserved_before_they_are_made(db, limits, monkeypatch):
     assert _code(runlimits.reserve_model_call, db, 1, 1) == "model_price_unverified"
 
 
+def _request(db) -> tuple[RfqRow, SessionRow]:
+    """A request of its own: these tests change rows, so they never touch the shared demo one."""
+    now, thread = datetime.now(UTC), f"limits-{uuid4().hex}"
+    mail = MessageRow(
+        external_id=thread, thread_id=thread, sender="c@example.com", received_at=now
+    )
+    db.add(mail)
+    db.flush()
+    rfq = RfqRow(
+        message_id=mail.id,
+        thread_id=thread,
+        origin="FRA",
+        destination="LAX",
+        weight_kg=Decimal("100"),
+        received_at=now,
+        expires_at=now + timedelta(minutes=6),
+    )
+    db.add(rfq)
+    db.flush()
+    session = SessionRow(rfq_id=rfq.id, deadline=rfq.expires_at)
+    db.add(session)
+    db.flush()
+    return rfq, session
+
+
 def _draft(db, rfq: RfqRow) -> ActionIntentRow:
     payload = {"to": "c@example.com", "subject": "s", "body": "b", "thread_id": rfq.thread_id}
     intent = ActionIntentRow(
@@ -81,9 +115,8 @@ def _draft(db, rfq: RfqRow) -> ActionIntentRow:
     return intent
 
 
-def test_dispatcher_sends_only_for_admitted_threads_and_counts_attempts(client, db, limits):
-    session = db.get(SessionRow, UUID(client.post("/internal/demo/run").json()["session_id"]))
-    rfq = db.get(RfqRow, session.rfq_id)
+def test_dispatcher_sends_only_for_admitted_threads_and_counts_attempts(db, limits):
+    rfq, _ = _request(db)
     first, second = _draft(db, rfq), _draft(db, rfq)
 
     assert _code(deliver_intent, db, first, FakeMailbox()) == "not_admitted"
@@ -94,10 +127,39 @@ def test_dispatcher_sends_only_for_admitted_threads_and_counts_attempts(client, 
     assert second.delivery_status == "pending"
 
 
-def test_a_booking_the_portal_answered_is_not_posted_again(client, db):
-    session = db.get(SessionRow, UUID(client.post("/internal/demo/run").json()["session_id"]))
-    booking = db.query(BookingRow).filter(BookingRow.rfq_id == session.rfq_id).one()
-    booking.status, booking.rate_id, booking.booking_reference = "submitted", "R-test", "BK-T"
+def test_a_booking_the_portal_answered_is_not_posted_again(db):
+    rfq, session = _request(db)
+    offer = RateCandidateRow(
+        rfq_id=rfq.id,
+        carrier="Test Air",
+        total=Decimal("100.00"),
+        currency="EUR",
+        rate_id="R-test",
+        complete=True,
+        source_ref="test",
+        source_version="test",
+    )
+    db.add(offer)
+    db.flush()
+    quote = QuoteDecisionRow(
+        rfq_id=rfq.id,
+        candidate_id=offer.id,
+        total=offer.total,
+        currency="EUR",
+        decided_at=datetime.now(UTC),
+    )
+    db.add(quote)
+    db.flush()
+    booking = BookingRow(
+        rfq_id=rfq.id,
+        quote_id=quote.id,
+        team_reference=f"TM-{session.id.hex}",
+        rate_id="R-test",
+        booking_reference="BK-T",
+        status="submitted",
+    )
+    db.add(booking)
+    db.flush()
     calls = []
 
     class Portal:

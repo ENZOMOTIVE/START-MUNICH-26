@@ -74,6 +74,31 @@ def test_live_request_wordings_are_read_completely(subject, body, expected):
     assert extract(subject, body)["fields"] == expected
 
 
+def test_the_body_outranks_a_forwarded_subject_line():
+    body = (
+        "Could you please quote your cheapest air freight option to EZE (Buenos Aires, AR), "
+        "including truck pickup from our site in 73825 Esslingen, Germany, and transport to "
+        "the departure airport?\n\nThe shipment consists of 7 pieces of furniture samples, with "
+        "a gross weight of 1210 kg and a total volume of 8.47 cbm."
+    )
+    fields = extract("RE: FW: VIENNA AIRPORT - RUH / 30 PCS 708 KGS", body)["fields"]
+    assert (fields["origin"], fields["destination"], fields["weight_kg"]) == ("STR", "EZE", "1210")
+    # A subject still supplies what the body leaves out.
+    assert extract("Quote FRA to DEL", "736 kg gross, 6.88 cbm")["fields"]["destination"] == "DEL"
+
+
+def test_truckers_are_asked_by_full_postcode():
+    # Live truckers refused "pickup zone 80" as "pickup postcode 80": they price by postcode.
+    from app.workflows.extract import pickup_postcode
+    from app.workflows.replies import pickup_enquiry
+
+    assert pickup_postcode(PICKUP_MUNICH, "81") == "81311"
+    assert pickup_postcode(PICKUP_MUNICH, "60") is None
+    mail = pickup_enquiry("81", "MUC", "196", "0.72", "0a1b2c3d-4e5f", "81311")
+    assert mail["subject"] == "Pickup enquiry: 81311 to MUC [ref 0a1b2c3d-4e5f]"
+    assert "From: postcode 81311" in mail["body"] and "zone" not in mail["body"]
+
+
 def test_two_different_postcodes_are_not_guessed():
     fields = extract("Quote to ORD", "Pickup at 81311 Munich or 60504 Frankfurt, 100 kg")["fields"]
     assert fields.get("pickup_required") is True

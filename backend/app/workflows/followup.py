@@ -37,6 +37,7 @@ _TRACKING_QUESTION = re.compile(
 )
 _ENQUIRY_REF = re.compile(r"\[ref ([0-9a-f]{8}-[0-9a-f]{4})\]")
 _BID_PRICE = re.compile(r"\b(EUR|USD)\s?(\d[\d,]*(?:\.\d{1,2})?)\b")
+_PRICE_AFTER = re.compile(r"\b(\d[\d,]*(?:\.\d{1,2})?)\s?(EUR|USD|€)")
 _ROUTE = re.compile(r"\b([A-Z]{3})\s*(?:-|–|->|to)\s*([A-Z]{3})\b")
 _BID_WEIGHT = re.compile(r"\b(\d+(?:[.,]\d+)?)\s*kgs?\b", re.IGNORECASE)
 _ALL_IN = re.compile(
@@ -76,6 +77,15 @@ def handle_follow_up(db: Session, message: MessageRow):
 def _answer_tracking(db, session, rfq: RfqRow, booking: BookingRow, question: MessageRow):
     updates = [e for e in repositories.events_for(db, session.id) if e.type == "tracking_update"]
     latest = max(updates, key=lambda e: e.payload["reported_at"], default=None)
+    # The live customer thanks us for every answer ("I look forward to the tracking update"),
+    # which reads as a question again: say the same facts once, or the two mailers loop.
+    for event in repositories.events_for(db, session.id):
+        if (
+            event.type == "tracking_answered"
+            and event.payload["external_id"] != question.external_id  # a retry still sends
+            and event.payload["evidence"]["tracking_update"] == (latest.payload if latest else None)
+        ):
+            return session
     quote = repositories.quote_for(db, rfq.id)
     candidate = db.get(RateCandidateRow, quote.candidate_id) if quote else None
     root = db.get(MessageRow, rfq.message_id)
@@ -313,16 +323,24 @@ def handle_carrier_bid(db: Session, message: MessageRow):
     if source["kind"] != "trucker":
         bid = _rate_bid(db, session, rfq, message, source)
     else:
-        price = _BID_PRICE.search(reply_text(message.body) or "")
-        amount = Decimal(price.group(2).replace(",", "")) if price else None
+        text = reply_text(message.body) or ""
+        price = _BID_PRICE.search(text)
+        after = None if price else _PRICE_AFTER.search(text)  # "245.00 EUR"
+        amount = Decimal((price.group(2) if price else after.group(1)).replace(",", "")) if (
+            price or after
+        ) else None
         if amount is None or not 0 < amount < 100000:
-            return None
-        bid = {
-            "kind": "pickup",
-            "carrier": source["name"],
-            "amount": str(amount),
-            "currency": price.group(1),
-        }
+            # A refusal ("we do not serve this zone") is an answer too: it is recorded, so
+            # the request does not wait for this trucker any longer. It never prices.
+            bid = {"kind": "pickup_declined", "carrier": source["name"], "text": text[:300]}
+        else:
+            bid = {
+                "kind": "pickup",
+                "carrier": source["name"],
+                "amount": str(amount),
+                "currency": price.group(1) if price else after.group(2).replace("€", "EUR"),
+                "text": text[:300],
+            }
     if not rfq_flow.has_event(db, session.id, "carrier_bid", message.external_id):
         repositories.append_event(
             db,
@@ -339,7 +357,8 @@ def handle_carrier_bid(db: Session, message: MessageRow):
             use_rate_bid(db, session, rfq, message, bid)
     # A pickup bid that arrives after the quote is committed is recorded and changes nothing.
     elif session.exception == rfq_flow.WAITING_FOR_PICKUP and rfq.status == "pending":
-        _continue_pricing(db, session, rfq)
+        if rfq_flow.pickup_bid(db, session, rfq) and rfq_flow.pickup_answers_in(db, session, rfq):
+            _continue_pricing(db, session, rfq)
     return session
 
 
