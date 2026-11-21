@@ -10,21 +10,23 @@ x-live-env: &live-env
   # Three-hour automatic run from 2026-11-21 22:50: a fresh request admits itself until
   # RUN_MAX_RFQS or RUN_MINUTES is reached, then waits for POST /api/sessions/{id}/admit.
   # RUN_MAX_RFQS was 1 and 2 for the first two requests (delivery verified on the board at
-  # 21:52 UTC), then 40.
+  # 21:52 UTC), then 40. Raised 2026-11-22 00:45 for the unattended overnight run: the
+  # 180-minute window would have stopped admission at 00:49 UTC (every later round unanswered).
   # Emergency stop: POST /api/run/stop (lift it with /api/run/resume).
   HOLD_NEW_REQUESTS: "false"
   RUN_LIMITS: "true"
-  RUN_MINUTES: "180"
-  RUN_MAX_RFQS: "40"
-  RUN_MAX_MAILS: "300"
-  RUN_MAX_BOOKINGS: "40"
-  RUN_MAX_MODEL_CALLS: "40"
-  RUN_MAX_TOKENS_IN: "20000"
-  RUN_MAX_TOKENS_OUT: "5000"
+  RUN_MINUTES: "1440"
+  RUN_MAX_RFQS: "600"
+  RUN_MAX_MAILS: "6000"
+  RUN_MAX_BOOKINGS: "600"
+  RUN_MAX_MODEL_CALLS: "2000"
+  RUN_MAX_TOKENS_IN: "1000000"
+  RUN_MAX_TOKENS_OUT: "50000"
   RUN_MAX_SPEND_USD: "1.00"
   # No model calls: LLM cost is 40 of the 100 points and the cross-check agreed with a wrong
   # reading in round 62. Set LLM_MODE to "gateway" for one model reading per request (prices:
   # platform.openai.com/docs/pricing, standard tier, read 2026-11-21, USD per 1M tokens).
+  # Replies are put into the customer's language without a model (app/workflows/language.py).
   LLM_MODE: "fake"
   EXTRACTION_MODEL: gpt-4o-mini
   MODEL_PRICE_IN_USD: "0.15"
