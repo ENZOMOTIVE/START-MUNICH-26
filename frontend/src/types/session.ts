@@ -63,6 +63,9 @@ export type SessionSummary = {
   paused: boolean;
   exception: string | null;
   simulated?: boolean;
+  carrier?: string | null;
+  quote_total?: string | null;
+  quote_currency?: string | null;
   rfq?: RfqPayload;
 };
 

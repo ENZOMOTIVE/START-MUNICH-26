@@ -10,6 +10,12 @@ from app.db import repositories
 from app.db.models import RateCandidateRow, RfqRow, SessionRow
 
 
+class SessionRfqSummary(BaseModel):
+    origin: str
+    destination: str
+    weight_kg: str
+
+
 class SessionListItem(BaseModel):
     id: UUID
     origin: str | None = None
@@ -19,7 +25,10 @@ class SessionListItem(BaseModel):
     paused: bool
     exception: str | None = None
     simulated: bool = True
-    rfq: dict | None = None
+    carrier: str | None = None
+    quote_total: str | None = None
+    quote_currency: str | None = None
+    rfq: SessionRfqSummary | None = None
 
 
 class SessionDetail(BaseModel):
@@ -75,6 +84,8 @@ def session_list(db: Session) -> list[SessionListItem]:
     items: list[SessionListItem] = []
     for session in repositories.list_sessions(db):
         rfq = db.get(RfqRow, session.rfq_id)
+        quote = repositories.quote_for(db, session.rfq_id)
+        candidate = db.get(RateCandidateRow, quote.candidate_id) if quote is not None else None
         items.append(
             SessionListItem(
                 id=session.id,
@@ -85,12 +96,15 @@ def session_list(db: Session) -> list[SessionListItem]:
                 paused=session.paused,
                 exception=session.exception,
                 simulated=session.simulated,
+                carrier=candidate.carrier if candidate is not None else None,
+                quote_total=str(quote.total) if quote is not None else None,
+                quote_currency=quote.currency if quote is not None else None,
                 rfq=(
-                    {
-                        "origin": rfq.origin,
-                        "destination": rfq.destination,
-                        "weight_kg": str(rfq.weight_kg),
-                    }
+                    SessionRfqSummary(
+                        origin=rfq.origin,
+                        destination=rfq.destination,
+                        weight_kg=str(rfq.weight_kg),
+                    )
                     if rfq is not None
                     else None
                 ),
