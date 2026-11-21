@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     run_max_spend_usd: float = 1.0
     # One model cross-check of the extracted fields per admitted request (LLM_MODE=gateway).
     # Prices are USD per 1M tokens for EXTRACTION_MODEL; 0 means unverified: no call is made.
+    # Door pickup: how many listed truckers of the zone are asked, and how long to wait for
+    # all of them before pricing with the bids on file (0: price on the first usable bid).
+    pickup_max_truckers: int = 3
+    pickup_wait_seconds: int = 0
     extraction_model: str = "gpt-4o-mini"
     model_price_in_usd: float = 0.0
     model_price_out_usd: float = 0.0

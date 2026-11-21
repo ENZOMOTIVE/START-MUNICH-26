@@ -192,6 +192,37 @@ def test_tracking_answer_uses_only_the_recorded_update(db):
         assert invented not in answer["body"]
 
 
+def test_a_thank_you_after_a_tracking_answer_is_not_answered_again(db):
+    """Live: the customer thanked us for each answer, and each thanks drew the same answer."""
+    from uuid import uuid4
+
+    from app.db.models import ActionIntentRow, MessageRow, SessionEventRow
+    from app.workflows import followup
+
+    runner.run("happy_path", 42)
+    answered = (
+        db.query(SessionEventRow)
+        .filter(SessionEventRow.type == "tracking_answered")
+        .order_by(SessionEventRow.occurred_at.desc())
+        .first()
+    )
+    question = db.query(MessageRow).filter_by(external_id=answered.payload["external_id"]).one()
+    thanks = MessageRow(
+        external_id=f"thanks-{uuid4()}",
+        thread_id=question.thread_id,
+        sender=question.sender,
+        subject=question.subject,
+        body="Thank you. I look forward to receiving the tracking update.",
+        received_at=question.received_at,
+        classification="follow_up",
+    )
+    db.add(thanks)
+    db.flush()
+    sent = db.query(ActionIntentRow).filter_by(kind="tracking").count()
+    followup.handle_follow_up(db, thanks)
+    assert db.query(ActionIntentRow).filter_by(kind="tracking").count() == sent
+
+
 def test_committed_quote_keeps_its_own_evidence(db):
     from app.db.models import MessageRow, QuoteDecisionRow
 

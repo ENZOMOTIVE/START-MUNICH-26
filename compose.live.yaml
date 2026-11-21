@@ -1,12 +1,3 @@
-# Bounded, supervised live run. Own project, database and volume; the demo and sandbox stacks
-# are not touched. The image is built once and pinned by LIVE_TAG: no source is mounted, so
-# editing the checkout never changes a running worker.
-#
-#   docker compose -f compose.live.yaml --env-file .env.live up -d postgres api
-#   (seed the mailbox cursor so that old mail is not read again), then: ... up -d worker
-#
-# `.env` supplies the team key (never printed), `.env.live` the operator token and LIVE_TAG.
-# Stop the dispatcher with:  docker compose -f compose.live.yaml stop worker   (data is kept)
 name: fiveu-live
 
 x-live-env: &live-env
@@ -16,9 +7,10 @@ x-live-env: &live-env
   FRONTEND_ORIGIN: http://127.0.0.1:5176
   FIXTURES_DIR: /fixtures
   OPERATOR_TOKEN: ${OPERATOR_TOKEN:?set in .env.live}
-  # Every new request waits, paused, until an operator admits it (POST /api/sessions/{id}/admit).
-  HOLD_NEW_REQUESTS: "true"
-  RUN_LIMITS: "true"
+  # Automatic since 2026-11-21 21:57 (team decision): no operator hold, no run budget. Set both
+  # back to "true" for a supervised run, where each request waits for POST /api/sessions/{id}/admit.
+  HOLD_NEW_REQUESTS: "false"
+  RUN_LIMITS: "false"
   RUN_MINUTES: "60"
   RUN_MAX_RFQS: "10"
   RUN_MAX_MAILS: "40"
@@ -34,8 +26,11 @@ x-live-env: &live-env
   MODEL_PRICE_IN_USD: "0.15"
   MODEL_PRICE_OUT_USD: "0.60"
   ROUTER_BACKEND: keyword
-  # The mailbox allows one poll every 5 seconds per team key.
-  MAILBOX_POLL_SECONDS: "5"
+  # Door pickup: ask every listed trucker of the zone (2 to 5) and wait for all of them.
+  PICKUP_MAX_TRUCKERS: "5"
+  PICKUP_WAIT_SECONDS: "60"
+  # The mailbox allows one poll every 5 seconds per team key; 5.0 drew a 429 about once a minute.
+  MAILBOX_POLL_SECONDS: "5.5"
 
 services:
   postgres:

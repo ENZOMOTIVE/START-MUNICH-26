@@ -82,6 +82,11 @@ def truckers_for_zone(zone: str) -> tuple[tuple[str, str], ...]:
     return _listed("trucker", str(zone))
 
 
+def pickup_postcode(text: str, zone: str | None) -> str | None:
+    """The full postcode the customer named for this pickup zone; truckers price by it."""
+    return next((code for code in _POSTCODE.findall(text) if code[:2] == str(zone)), None)
+
+
 def airlines_for(destination: str) -> tuple[tuple[str, str], ...]:
     """(name, email) of every listed airline that serves this airport."""
     return _listed("airline", str(destination))
@@ -111,8 +116,18 @@ def _route(text: str) -> tuple[str | None, str | None]:
 
 
 def extract(subject: str, body: str) -> dict:
-    """Fields one mail states, with notes about anything it states unusably."""
-    text = f"{subject or ''}\n{body or ''}"
+    """Fields one mail states, with notes about anything it states unusably.
+
+    The body outranks the subject line: a live request arrived under the subject of an old
+    forwarded mail ("RE: FW: ... RUH / 30 PCS 708 KGS") while asking for another shipment.
+    """
+    found = _read(body or "")
+    for name, value in _read(subject or "")["fields"].items():
+        found["fields"].setdefault(name, value)
+    return found
+
+
+def _read(text: str) -> dict:
     fields: dict = {}
     notes: list[str] = []
     origin, destination = _route(text)
