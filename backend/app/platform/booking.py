@@ -19,6 +19,10 @@ HTTP_TIMEOUT_SECONDS = 8.0
 class BookingUnknown(Exception):
     """The request may have reached the portal; the outcome is not known."""
 
+    def __init__(self, detail: str, retry_after: float | None = None):
+        super().__init__(detail)
+        self.retry_after = retry_after  # seconds, when the portal said when to come back
+
 
 class BookingRejected(Exception):
     """The portal answered and refused."""
@@ -50,7 +54,10 @@ class PortalBooking:
         except httpx.TransportError as exc:
             raise BookingUnknown(f"{type(exc).__name__}: {exc}") from exc
         if response.status_code >= 500 or response.status_code == 429:
-            raise BookingUnknown(f"HTTP {response.status_code}")
+            wait = response.headers.get("Retry-After", "")
+            raise BookingUnknown(
+                f"HTTP {response.status_code}", float(wait) if wait.isdigit() else None
+            )
         if response.status_code >= 400:
             raise BookingRejected(f"HTTP {response.status_code}: {response.text[:200]}")
         try:

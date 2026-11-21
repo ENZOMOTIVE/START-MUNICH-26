@@ -34,9 +34,9 @@ def process_jobs_once(db, worker_id: str, limit: int = 10) -> list:
             job.last_error = f"{exc.code}: {exc}"
             # Only a temporary condition is worth another attempt. Bad input, an expired
             # request or an uncertain send will not get better by repeating it.
-            if exc.code == "session_paused":
-                # A person holds this session for as long as they need. Look again shortly;
-                # a pause never uses up the job's attempts.
+            if exc.code in {"session_paused", "run_stopped"}:
+                # A person holds this session (or the whole run) for as long as they need.
+                # Look again shortly; a pause never uses up the job's attempts.
                 job.status = "pending"
                 job.run_after = datetime.now(UTC) + PAUSED_RECHECK
             elif exc.code in RETRYABLE and job.attempts < job.max_attempts:

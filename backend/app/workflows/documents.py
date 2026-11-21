@@ -6,6 +6,7 @@ facts on the message, so a later look at the same thread costs no further mailbo
 """
 
 import hashlib
+import html
 import io
 import json
 import re
@@ -59,8 +60,13 @@ def read_text(content: bytes) -> str:
         with pdfplumber.open(io.BytesIO(content)) as pdf:
             return "\n".join(page.extract_text() or "" for page in pdf.pages)
     if content.startswith(b"PK"):
-        if "xl/workbook.xml" not in zipfile.ZipFile(io.BytesIO(content)).namelist():
-            raise ValueError("an archive that is not a spreadsheet")
+        archive = zipfile.ZipFile(io.BytesIO(content))
+        if "word/document.xml" in archive.namelist():  # a Word document: its paragraphs
+            xml = archive.read("word/document.xml").decode("utf-8", "replace")
+            xml = re.sub(r"</w:p>|</w:tr>|<w:br[^>]*>", "\n", xml).replace("</w:tc>", " ")
+            return html.unescape(re.sub(r"<[^>]+>", "", xml))
+        if "xl/workbook.xml" not in archive.namelist():
+            raise ValueError("an archive that is not a spreadsheet or a Word document")
         import openpyxl
 
         book = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)

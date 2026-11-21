@@ -45,6 +45,11 @@ def enqueue_job(db: Session, kind: str, payload: dict) -> JobRow:
 
 def claim_job(db: Session, worker_id: str) -> JobRow | None:
     now = datetime.now(UTC)
+    received = (
+        select(MessageRow.received_at)
+        .where(cast(MessageRow.id, String) == JobRow.payload["message_id"].astext)
+        .scalar_subquery()
+    )
     stmt = (
         select(JobRow)
         .where(
@@ -55,8 +60,10 @@ def claim_job(db: Session, worker_id: str) -> JobRow | None:
             ),
             JobRow.run_after <= now,
         )
-        .order_by(JobRow.created_at)
-        .with_for_update(skip_locked=True)
+        # Mail that arrived inside the last answer window goes first, so a backlog of old
+        # requests never delays a fresh one. Inside each group the order stays oldest first.
+        .order_by(case((received >= now - ANSWER_WINDOW, 0), else_=1), JobRow.created_at)
+        .with_for_update(skip_locked=True, of=JobRow)
         .limit(1)
     )
     job = db.execute(stmt).scalar_one_or_none()

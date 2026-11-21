@@ -8,6 +8,8 @@ from app.platform.decisions import ACCEPT, DECLINE, QUESTION, ReplyContext, Repl
 TRACKING_ADDRESS = "tracking@hackloop.mail"
 RATE_DESK_ADDRESS = "ratedesk@hackloop.mail"
 
+# We put this in the subject of every enquiry; the carrier's reply carries it back.
+ENQUIRY_REF = re.compile(r"\[ref ([0-9a-f]{8}-[0-9a-f]{4})\]")
 # Subject documented for portal booking confirmations: "Booking <booking_reference> confirmed".
 BOOKING_CONFIRMED = re.compile(r"\bbooking\s+BK-[A-Z0-9]{8}\s+confirmed\b", re.IGNORECASE)
 
@@ -42,6 +44,7 @@ class MailFacts:
     thread_stage: str | None = None
     quote_total: str | None = None
     quote_currency: str | None = None
+    answers_enquiry: bool = False  # the subject carries the reference of a request of ours
 
 
 @dataclass(frozen=True)
@@ -97,7 +100,7 @@ def decide(facts: MailFacts, judge: ReplyJudge) -> RoutingDecision:
         return done("tracking", "sender_rule", "tracking_address")
     if sender["kind"] == "rate_desk":
         return done("rate_desk_reply", "sender_rule", "rate_desk_address")
-    if sender["kind"] == "airline" and facts.has_attachments:
+    if sender["kind"] == "airline" and facts.has_attachments and not facts.answers_enquiry:
         return done("tariff", "sender_rule", "airline_with_attachment")
     if sender["kind"] in {"airline", "trucker"}:
         return done("carrier_bid", "sender_rule", "carrier_address")

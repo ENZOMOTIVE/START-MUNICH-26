@@ -13,6 +13,7 @@ _ASK = {
     "destination": "the destination airport",
     "weight_kg": "the gross weight in kg",
     "pickup_zone": "the postcode or zone we should collect from",
+    "volume_m3": "the total volume in cbm (or the dimensions and number of pieces)",
 }
 _DOC = {
     "dgd": "the Shipper's Declaration for Dangerous Goods (DGD)",
@@ -202,6 +203,35 @@ def acceptance_clarification(name, subject, carrier, problem: str) -> dict:
         f"If you accept the offer with {carrier} exactly as quoted, please reply "
         '"We accept the quote" and I will book it. If you need a change, tell me what you '
         "need and I will send a revised offer.",
+    )
+
+
+def quote_answer(
+    name, subject, carrier, transit_days, charge_codes: list[str], valid_until, pickup_from, origin
+) -> dict:
+    """Answers a question about the quote we sent. It repeats no price, so the quote stays the
+    only priced message in the thread."""
+    included = _join([c.replace("_", " ") for c in charge_codes] or ["the air freight"])
+    pickup = (
+        f"Pickup from {pickup_from} to {origin} airport is included."
+        if pickup_from
+        else f"Pickup is not included: the price starts at {origin} airport."
+    )
+    transit = (
+        f"{carrier} needs {transit_days} days in transit"
+        if transit_days is not None
+        else f"{carrier} has not confirmed a transit time"
+    )
+    valid = f", and the offer is valid until {_when(valid_until)}" if valid_until else ""
+    return _mail(
+        "quote_answer",
+        subject,
+        name,
+        "Thank you for your question.",
+        f"The total in my quote is all-in. It covers {included}, and nothing comes on top. "
+        f"{pickup}",
+        f"{transit}{valid}.",
+        "To book, reply to this email and confirm that you accept.",
     )
 
 

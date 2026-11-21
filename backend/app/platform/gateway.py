@@ -77,14 +77,15 @@ class LiveGateway:
             "messages": messages or [{"role": "user", "content": prompt or ""}],
             **params,
         }
-        if get_settings().run_limits:
-            # Bounded run: reserve the worst case (a generous token estimate for the prompt,
-            # the full output cap) in its own committed transaction before the call is made.
-            from app.db.session import session_scope
+        from app.db.session import session_scope
 
-            body.setdefault("max_tokens", 200)
-            prompt_chars = sum(len(str(m.get("content") or "")) for m in body["messages"])
-            with session_scope() as scope:
+        with session_scope() as scope:
+            runlimits.require_running(scope)  # the global stop also stops paid model calls
+            if get_settings().run_limits:
+                # Bounded run: reserve the worst case (a generous token estimate for the
+                # prompt, the full output cap), committed before the call is made.
+                body.setdefault("max_tokens", 200)
+                prompt_chars = sum(len(str(m.get("content") or "")) for m in body["messages"])
                 runlimits.reserve_model_call(scope, prompt_chars // 3 + 50, body["max_tokens"])
         try:
             response = client.post(CHAT_COMPLETIONS, json=body)
