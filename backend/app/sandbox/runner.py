@@ -203,6 +203,10 @@ def _route(world: World, factory, entry: list, state: dict) -> None:
 
 def _act(world: World, factory, action: dict) -> None:
     with factory() as db:
+        if callable(action["do"]):  # a focused test steps in as the operator
+            action["do"](db, world)
+            db.commit()
+            return
         root = world.requests[action["request"]]["root"]
         message = db.scalars(select(MessageRow).where(MessageRow.external_id == str(root))).one()
         session = repositories.session_by_thread(db, message.thread_id)

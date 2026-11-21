@@ -21,6 +21,7 @@ HANDLERS: dict[str, str] = {
     "follow_up": "app.workflows.followup:handle_follow_up",
     "tracking": "app.workflows.followup:handle_tracking_update",
     "carrier_bid": "app.workflows.followup:handle_carrier_bid",
+    "rate_desk_reply": "app.workflows.followup:handle_carrier_bid",
     "tariff": "app.workflows.followup:handle_tariff_mail",
     "booking_confirmation": "app.workflows.followup:handle_booking_confirmation",
 }

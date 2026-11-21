@@ -59,14 +59,23 @@ def airports() -> tuple[frozenset[str], frozenset[str]]:
 
 
 @lru_cache
-def truckers_for_zone(zone: str) -> tuple[tuple[str, str], ...]:
-    """(name, email) of every listed trucker that serves this pickup zone."""
+def _listed(kind: str, place: str) -> tuple[tuple[str, str], ...]:
     with (_APP / "platform" / "data" / "carrier-list.csv").open(encoding="utf-8") as handle:
         return tuple(
             (row["name"], row["email"].strip().lower())
             for row in csv.DictReader(handle)
-            if row["kind"] == "trucker" and str(zone) in row["serves"].split()
+            if row["kind"] == kind and place in row["serves"].split()
         )
+
+
+def truckers_for_zone(zone: str) -> tuple[tuple[str, str], ...]:
+    """(name, email) of every listed trucker that serves this pickup zone."""
+    return _listed("trucker", str(zone))
+
+
+def airlines_for(destination: str) -> tuple[tuple[str, str], ...]:
+    """(name, email) of every listed airline that serves this airport."""
+    return _listed("airline", str(destination))
 
 
 def _decimal(raw: str) -> Decimal | None:

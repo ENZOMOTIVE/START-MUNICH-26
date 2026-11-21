@@ -4,25 +4,32 @@ Tracking answers are built from stored facts only: the booking row and `tracking
 events. There is no shipment-status lookup, so a location is never invented.
 """
 
+import asyncio
 import hashlib
 import logging
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from functools import lru_cache
+from uuid import UUID
 
 from sqlalchemy import String, cast, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.core import clock
+from app.core.config import get_settings
+from app.core.errors import DomainError
 from app.db import repositories
 from app.db.models import BookingRow, MessageRow, RateCandidateRow, RfqRow
 from app.platform import get_adapters
 from app.platform.carriers import carrier_for
 from app.platform.decisions import reply_text
+from app.platform.routing import sender_info
 from app.workflows import booking as booking_flow
 from app.workflows import replies
 from app.workflows import rfq as rfq_flow
+from app.workflows.extract import airports
 
 log = logging.getLogger(__name__)
 _TRACKING_QUESTION = re.compile(
@@ -30,6 +37,24 @@ _TRACKING_QUESTION = re.compile(
 )
 _ENQUIRY_REF = re.compile(r"\[ref ([0-9a-f]{8}-[0-9a-f]{4})\]")
 _BID_PRICE = re.compile(r"\b(EUR|USD)\s?(\d[\d,]*(?:\.\d{1,2})?)\b")
+_ROUTE = re.compile(r"\b([A-Z]{3})\s*(?:-|–|->|to)\s*([A-Z]{3})\b")
+_BID_WEIGHT = re.compile(r"\b(\d+(?:[.,]\d+)?)\s*kgs?\b", re.IGNORECASE)
+_ALL_IN = re.compile(
+    r"\ball[- ]in\b|\ball\s+charges\s+included\b"
+    r"|\bincl(?:uding|usive\s+of|\.)?\s+(?:all\s+)?(?:fuel|surcharges|charges)",
+    re.IGNORECASE,
+)
+_NOT_ALL_IN = re.compile(
+    r"\bexcl|\bplus\s+(?:fuel|security|surcharges?)\b|\bper\s+kg\b|/\s?kg\b|\bsubject\s+to\b",
+    re.IGNORECASE,
+)
+_VALID = re.compile(
+    r"\bvalid\s+(?:until|till|through|to)\s+(\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2})?)",
+    re.IGNORECASE,
+)
+_TRANSIT = re.compile(
+    r"\btransit\D{0,12}(\d{1,2})\s*days?|\b(\d{1,2})\s*days?\s+transit", re.IGNORECASE
+)
 _BOOKING_REF = re.compile(r"\bBK-[A-Z0-9]{6,}\b")
 _TEAM_REF = re.compile(r"\bTM-[0-9a-f]{32}\b")
 
@@ -145,43 +170,247 @@ def handle_tracking_update(db: Session, message: MessageRow):
     return session
 
 
+def read_rate_bid(text: str, rfq: RfqRow, now: datetime, direct_reply: bool) -> dict:
+    """What an airline's or the rate desk's answer offers, and whether it can be used as it is.
+
+    status: accepted | review | rejected. A reply for another shipment or with a lapsed
+    validity is rejected; anything the reply leaves open is a person's decision, not a guess.
+    """
+    rejected, review = [], []
+    known = airports()[1]
+    routes = {pair for pair in _ROUTE.findall(text) if set(pair) <= known}
+    if routes and (rfq.origin, rfq.destination) not in routes:
+        rejected.append("it is for another route")
+    elif not routes and not direct_reply:
+        review.append("it does not restate the route and is not a direct reply to our enquiry")
+    weights = [Decimal(w.replace(",", ".")) for w in _BID_WEIGHT.findall(text)]
+    if weights and all(abs(w - Decimal(rfq.weight_kg)) > Decimal("0.5") for w in weights):
+        review.append("it names a weight other than the one requested")
+    prices = sorted(set(_BID_PRICE.findall(text)))
+    amount = Decimal(prices[0][1].replace(",", "")) if len(prices) == 1 else None
+    if amount is None or not 0 < amount < 1000000:
+        review.append("it does not state exactly one price")
+    elif prices[0][0] != "EUR":
+        review.append(f"the price is in {prices[0][0]}")
+    if _NOT_ALL_IN.search(text):
+        review.append("charges come on top of the stated price")
+    elif not _ALL_IN.search(text):
+        review.append("it does not say that all charges are included")
+    valid_until, stated = None, _VALID.search(text)
+    if stated:
+        # A date alone is good until the end of that day.
+        stamp = stated.group(1).replace(" ", "T")
+        valid_until = datetime.fromisoformat(stamp if "T" in stamp else f"{stamp}T23:59")
+        valid_until = valid_until.replace(tzinfo=UTC)
+        if valid_until <= now:
+            rejected.append("its validity has passed")
+    transit = _TRANSIT.search(text)
+    return {
+        "status": "rejected" if rejected else "review" if review else "accepted",
+        "reasons": rejected + review,
+        "amount": str(amount) if amount is not None else None,
+        "currency": prices[0][0] if len(prices) == 1 else None,
+        "valid_until": valid_until.isoformat() if valid_until else None,
+        "transit_days": int(transit.group(1) or transit.group(2)) if transit else None,
+    }
+
+
+def _rate_bid(db: Session, session, rfq: RfqRow, message: MessageRow, source: dict) -> dict:
+    """Check an airline's or the rate desk's reply against the request it answers."""
+    enquiry = repositories.action_intent_by_key(
+        db, f"rate-enquiry:{rfq.id}:{source['email']}"[:128]
+    )
+    mail = (message.raw or {}).get("mail") or {}
+    sent_id = ((enquiry.payload or {}).get("_send") or {}).get("id") if enquiry else None
+    text = reply_text(message.body) or ""
+    direct = sent_id is not None and str(mail.get("in_reply_to")) == str(sent_id)
+    bid = read_rate_bid(text, rfq, clock.now(), direct)
+    carrier = source["name"]
+    if source["kind"] == "rate_desk":
+        # The rate desk answers for an airline; the booking has to go to that airline.
+        listed = rfq_flow.airlines_for(rfq.destination)
+        carrier = next((name for name, _ in listed if name.lower() in text.lower()), None)
+        if carrier is None and bid["status"] != "rejected":
+            bid["status"] = "review"
+            bid["reasons"].append("it names no listed airline that could be booked")
+    if enquiry is None or enquiry.delivery_status != "confirmed":
+        bid["status"] = "rejected"
+        bid["reasons"].insert(0, "we did not ask this sender about this request")
+    if bid["status"] == "accepted" and rfq.pickup_required:
+        if rfq_flow.pickup_bid(db, session, rfq) is None:
+            bid["status"] = "review"
+            bid["reasons"].append("the request needs a pickup and no trucker price is on file")
+    return {**bid, "kind": "rate", "carrier": carrier or "Rate desk", "rfq_id": str(rfq.id)}
+
+
+def use_rate_bid(db: Session, session, rfq: RfqRow, message: MessageRow, bid: dict) -> None:
+    """Turn a usable bid into an offer and go on pricing. Safe to call twice for one mail."""
+    source_ref = f"mail:{message.external_id}"
+    if bid.get("amount") is None or bid.get("currency") != "EUR":
+        raise DomainError("bid_has_no_usable_price")
+    if any(c.source_ref == source_ref for c in repositories.candidates_for(db, rfq.id)):
+        return
+    pickup = rfq_flow.pickup_bid(db, session, rfq) if rfq.pickup_required else None
+    if rfq.pickup_required and pickup is None:
+        raise DomainError("pickup_price_missing")
+    charges = [{"code": "air_freight_all_in", "amount": bid["amount"], "currency": "EUR"}]
+    if pickup is not None:
+        charges.append({"code": "pickup", "amount": str(pickup.cost), "currency": "EUR"})
+    valid_until = bid.get("valid_until")
+    db.add(
+        RateCandidateRow(
+            rfq_id=rfq.id,
+            carrier=bid["carrier"],
+            total=sum(Decimal(c["amount"]) for c in charges),
+            currency="EUR",
+            transit_days=bid.get("transit_days"),
+            rate_id=None,  # no portal rate: booked by writing to the airline
+            complete=True,
+            valid_until=datetime.fromisoformat(valid_until) if valid_until else None,
+            source_ref=source_ref,
+            source_version="email-bid",
+            charges=charges,
+            simulated=bool(message.simulated) or not get_settings().live_allowed(),
+        )
+    )
+    db.flush()
+    if session.exception == rfq_flow.WAITING_FOR_RATE and rfq.status == "pending":
+        _continue_pricing(db, session, rfq)
+
+
+def _continue_pricing(db: Session, session, rfq: RfqRow) -> None:
+    root = db.get(MessageRow, rfq.message_id)
+    found = rfq_flow.assess(db, root)
+    if not found["missing"]:
+        found["fields"] = rfq_flow._validated(found["fields"])
+    rfq_flow.advance(db, session, rfq, root, found)
+
+
+def _flag(db: Session, message: MessageRow, key: str, value: dict) -> None:
+    message.raw = {**(message.raw if isinstance(message.raw, dict) else {}), key: value}
+    flag_modified(message, "raw")
+    db.flush()
+
+
 def handle_carrier_bid(db: Session, message: MessageRow):
-    """A trucker's answer to a pickup enquiry. Only its price and currency are read."""
+    """A carrier's answer to one of our enquiries: a trucker's pickup price, or a rate from an
+    airline or the rate desk. The `[ref ...]` we put in the subject says which request."""
     reference = _ENQUIRY_REF.search(message.subject or "")
-    carrier = carrier_for(message.sender)
-    price = _BID_PRICE.search(reply_text(message.body) or "")
-    if not (reference and carrier and carrier.kind == "trucker" and price):
-        return None
-    rfq = db.scalars(
-        select(RfqRow).where(cast(RfqRow.id, String).like(f"{reference.group(1)}%"))
-    ).first()
+    source = sender_info(message.sender)
+    rfq = (
+        db.scalars(
+            select(RfqRow).where(cast(RfqRow.id, String).like(f"{reference.group(1)}%"))
+        ).first()
+        if reference
+        else None
+    )
     session = repositories.session_by_rfq(db, rfq.id) if rfq else None
-    amount = Decimal(price.group(2).replace(",", ""))
-    if session is None or not 0 < amount < 100000:
+    if session is None:
+        if source["kind"] == "rate_desk" and not (message.raw or {}).get("unmatched"):
+            reason = "no enquiry of ours matches this reply"
+            _flag(db, message, "unmatched", {"kind": "rate_desk_reply", "reason": reason})
         return None
+    if source["kind"] != "trucker":
+        bid = _rate_bid(db, session, rfq, message, source)
+    else:
+        price = _BID_PRICE.search(reply_text(message.body) or "")
+        amount = Decimal(price.group(2).replace(",", "")) if price else None
+        if amount is None or not 0 < amount < 100000:
+            return None
+        bid = {
+            "kind": "pickup",
+            "carrier": source["name"],
+            "amount": str(amount),
+            "currency": price.group(1),
+        }
     if not rfq_flow.has_event(db, session.id, "carrier_bid", message.external_id):
         repositories.append_event(
             db,
             session.id,
             "carrier_bid",
-            {
-                "external_id": message.external_id,
-                "kind": "pickup",
-                "carrier": carrier.name,
-                "amount": str(amount),
-                "currency": price.group(1),
-                "simulated": bool(message.simulated),
-            },
+            {"external_id": message.external_id, **bid, "simulated": bool(message.simulated)},
             occurred_at=message.received_at,
         )
-    # A bid that arrives after the quote is committed is recorded and changes nothing.
-    if session.exception == rfq_flow.WAITING_FOR_PICKUP and rfq.status == "pending":
-        root = db.get(MessageRow, rfq.message_id)
-        found = rfq_flow.assess(db, root)
-        if not found["missing"]:
-            found["fields"] = rfq_flow._validated(found["fields"])
-        rfq_flow.advance(db, session, rfq, root, found)
+    if bid["kind"] == "rate":
+        if "bid" not in (message.raw or {}):
+            status = "review_required" if bid["status"] == "review" else bid["status"]
+            _flag(db, message, "bid", {**bid, "status": status})
+        if bid["status"] == "accepted":
+            use_rate_bid(db, session, rfq, message, bid)
+    # A pickup bid that arrives after the quote is committed is recorded and changes nothing.
+    elif session.exception == rfq_flow.WAITING_FOR_PICKUP and rfq.status == "pending":
+        _continue_pricing(db, session, rfq)
     return session
+
+
+def refresh_tariff_offers(db: Session, carrier: str) -> int:
+    """After a tariff review: reprice this carrier's tariff offers for requests that are still
+    open, from the approved snapshot. Rows are updated in place; a quoted request keeps its
+    offer. Returns how many requests were repriced."""
+    from app.pricing.candidates import _price_request
+    from app.pricing.contract import option_to_contract
+    from app.pricing.tariff_candidates import TariffBook, build_candidates
+
+    known_tariff_checksums.cache_clear()
+    book, now, repriced = TariffBook.from_snapshot(), clock.now(), 0
+    rows = db.scalars(
+        select(RateCandidateRow)
+        .join(RfqRow, RfqRow.id == RateCandidateRow.rfq_id)
+        .where(
+            RateCandidateRow.carrier == carrier,
+            RateCandidateRow.rate_id.is_(None),
+            RateCandidateRow.source_version != "email-bid",
+            RfqRow.status == "pending",
+        )
+    ).all()
+    for row in rows:
+        rfq = db.get(RfqRow, row.rfq_id)
+        session = repositories.session_by_rfq(db, rfq.id)
+        if session is None or repositories.quote_for(db, rfq.id) is not None:
+            continue
+        pickup = rfq_flow.pickup_bid(db, session, rfq) if rfq.pickup_required else None
+        priced = asyncio.run(
+            build_candidates(_price_request(rfq), book, None, pickup=pickup, now=now)
+        )
+        offers = [option_to_contract(option, rfq.id, now=now) for option in priced.candidates]
+        fresh = next((offer for offer in offers if offer.carrier == carrier), None)
+        if fresh is None:
+            row.complete = False  # the approved tariff no longer offers this lane
+        else:
+            for name in ("total", "currency", "transit_days", "complete", "valid_until"):
+                setattr(row, name, getattr(fresh, name))
+            row.source_ref, row.source_version = fresh.source_ref, fresh.source_version
+            row.charges = [charge.model_dump(mode="json") for charge in fresh.charges]
+        db.flush()
+        repriced += 1
+        if session.exception == rfq_flow.WAITING_FOR_RATE:
+            _continue_pricing(db, session, rfq)
+    return repriced
+
+
+def apply_review(db: Session, message: MessageRow, approve: bool = False) -> dict:
+    """A person has dealt with a flagged mail. Approving a bid prices with it; clearing a
+    tariff hold reprices that carrier's open offers."""
+    raw, result = dict(message.raw or {}), {}
+    bid = raw.get("bid") if (raw.get("bid") or {}).get("status") == "review_required" else None
+    if bid and approve:
+        rfq = db.get(RfqRow, UUID(bid["rfq_id"]))
+        use_rate_bid(db, repositories.session_by_rfq(db, rfq.id), rfq, message, bid)
+        result["bid_used"] = True
+        raw = dict(message.raw or {})
+    if bid:
+        raw["bid"] = {**bid, "status": "approved" if approve else "dismissed"}
+    held = (raw.get("tariff") or {}).get("status") == "review_required"
+    if "tariff" in raw:
+        raw["tariff"] = {**raw["tariff"], "status": "reviewed"}
+    raw.pop("unmatched", None)
+    message.raw = raw
+    flag_modified(message, "raw")
+    db.flush()
+    carrier = carrier_for(message.sender)
+    if held and carrier is not None:
+        result["repriced_requests"] = refresh_tariff_offers(db, carrier.name)
+    return result
 
 
 @lru_cache

@@ -242,7 +242,7 @@ def test_mail_no_agent_handles_is_left_for_a_person(db):
     newest = db.query(MessageRow).filter(MessageRow.sender == "ratedesk@hackloop.mail")
     flagged = newest.order_by(MessageRow.created_at.desc()).first()
     assert flagged.classification == "rate_desk_reply"
-    assert flagged.raw["unmatched"]["reason"] == "no agent handles this kind of mail"
+    assert flagged.raw["unmatched"]["reason"] == "no enquiry of ours matches this reply"
 
 
 # ---------- operator takeover ----------

@@ -20,8 +20,10 @@ from decimal import ROUND_HALF_UP, Decimal
 import httpx
 
 from app.platform.booking import PortalBooking
+from app.platform.carriers import carrier_for
 from app.platform.gateway import GatewayError, _record_usage
 from app.platform.mailbox import LiveMailbox
+from app.platform.routing import RATE_DESK_ADDRESS
 from app.pricing.portal_client import PortalClient, PortalState
 
 BASE_URL = "https://sandbox.invalid"
@@ -259,10 +261,33 @@ class World:
         trucker = self.scenario.get("truckers", {}).get(item["to"])
         airline = self.scenario.get("airlines", {}).get(item["to"])
         if trucker is None and airline is None:
-            self.stray.append(item)
+            # The mailbox accepts any listed carrier and the rate desk; one the scenario gives
+            # no voice simply never answers. Any other address is a mail gone astray.
+            listed = item["to"] == RATE_DESK_ADDRESS or carrier_for(item["to"]) is not None
+            (self.carrier_mail if listed else self.stray).append(item)
             return
         self.carrier_mail.append(item)
         thread = {"references": [item["id"]], "in_reply_to": item["id"], "from": item["to"]}
+        enquiry = re.match(r"Rate enquiry ([A-Z]{3})-([A-Z]{3}), (\S+) kg", item["subject"])
+        if airline and enquiry and airline.get("bid"):
+            bid = airline["bid"]
+            text = bid.get("body") or (
+                "Hello, {origin} to {destination}, {weight} kg: EUR {price} all-in, "
+                "transit 4 days, valid until {valid}."
+            )
+            body = text.format(
+                origin=enquiry.group(1),
+                destination=enquiry.group(2),
+                weight=enquiry.group(3),
+                price=bid.get("price"),
+                valid=(self.now + timedelta(days=2)).date().isoformat(),
+                yesterday=(self.now - timedelta(days=1)).date().isoformat(),
+            )
+            sender = bid.get("from", item["to"])  # `from` lets a test answer as someone else
+            reply = {"from": sender, "subject": f"Re: {item['subject']}", "body": body}
+            self.schedule(
+                reply if bid.get("detached") else {**thread, **reply}, bid.get("delay", 20)
+            )
         if trucker and trucker.get("price"):
             body = f"Hello, we can collect this for EUR {trucker['price']} all-in."
             reply = {**thread, "subject": f"Re: {item['subject']}", "body": body}
@@ -304,7 +329,9 @@ class World:
             if "cannot offer" in lower:
                 request["outcome"], request["reason"] = "no_offer", "no price was offered"
         elif (
-            "update for booking" in lower or "tracking update" in lower or "not confirmed" in lower
+            "update for booking" in lower
+            or "tracking update" in lower
+            or "not confirmed yet" in lower
         ):
             request["tracking_answers"].append(text)
         elif "have not booked anything yet" in lower:

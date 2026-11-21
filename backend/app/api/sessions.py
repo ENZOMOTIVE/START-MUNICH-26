@@ -18,6 +18,7 @@ from app.db.models import ActionIntentRow, GatewayUsageRow, MessageRow, SessionR
 from app.db.session import get_db, get_session_factory
 from app.platform import get_adapters
 from app.platform.outbox import deliver_intent
+from app.workflows import followup
 
 router = APIRouter()
 
@@ -99,6 +100,10 @@ def resume(session_id: UUID, db: Session = Depends(get_db)):
 class DraftEdit(BaseModel):
     subject: str | None = None
     body: str
+
+
+class MailResolution(BaseModel):
+    approve: bool = False
 
 
 class Resolution(BaseModel):
@@ -197,19 +202,16 @@ def resolve_unknown(
 
 
 @router.post("/api/review/mail/{external_id}/resolve", dependencies=[Depends(operator)])
-def resolve_mail(external_id: str, db: Session = Depends(get_db)):
-    """A person has dealt with this mail: clear its flag (and lift a tariff hold)."""
+def resolve_mail(
+    external_id: str, body: MailResolution | None = None, db: Session = Depends(get_db)
+):
+    """A person has dealt with this mail: clear its flag. `approve` uses a carrier's bid that
+    waited for review; clearing a tariff hold reprices that carrier's open offers."""
     message = db.scalars(select(MessageRow).where(MessageRow.external_id == external_id)).first()
     if message is None:
         raise NotFoundError(f"mail {external_id}")
-    raw = dict(message.raw or {})
-    raw.pop("unmatched", None)
-    if "tariff" in raw:
-        raw["tariff"] = {**raw["tariff"], "status": "reviewed"}
-    message.raw = raw
-    flag_modified(message, "raw")
-    db.flush()
-    return {"external_id": external_id, "resolved": True}
+    applied = followup.apply_review(db, message, approve=bool(body and body.approve))
+    return {"external_id": external_id, "resolved": True, **applied}
 
 
 @router.get("/api/usage")
@@ -251,6 +253,7 @@ def review(db: Session = Depends(get_db)):
         .where(
             MessageRow.raw.has_key("unmatched")  # noqa: W601 - JSONB key test, not dict.has_key
             | (MessageRow.raw["tariff"]["status"].astext == "review_required")
+            | (MessageRow.raw["bid"]["status"].astext == "review_required")
         )
         .order_by(MessageRow.received_at)
     ).all()
@@ -267,6 +270,7 @@ def review(db: Session = Depends(get_db)):
                 "kind": m.classification,
                 "unmatched": (m.raw or {}).get("unmatched"),
                 "tariff": (m.raw or {}).get("tariff"),
+                "bid": (m.raw or {}).get("bid"),
             }
             for m in mails[-200:]
         ],

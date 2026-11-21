@@ -103,6 +103,12 @@ WRONG_DOCS = [
         "text": "SHIPPER'S DECLARATION FOR DANGEROUS GOODS\nUN1263 Paint, Class 3\n120 L",
     },
 ]
+KTM_BODY = "Please quote 300 kg, 1.2 cbm from FRA to KTM."
+KTM_CUSTOMER = {"budget": "5000.00", "truth": ["FRA", "KTM", "300 kg"]}
+ZEPHYR = "zephyr-steppe-cargo@hackloop.mail"
+HIMALAYA = "himalaya-bridge-air@hackloop.mail"
+PAMPERO = "pampero-air-cargo@hackloop.mail"
+RATE_DESK = "ratedesk@hackloop.mail"
 TRACKING_FLOW = [
     {
         "from": TRACKING,
@@ -370,9 +376,11 @@ _ALL = [
             rfq("rfq1"),
         ],
         {
+            # The only portal airline times out, so the listed airlines and the rate desk are
+            # asked by mail. Nobody answers; the customer is told before the deadline.
             "slow": {
                 "stage": "exception",
-                "blocked_on": "no_complete_candidates",
+                "blocked_on": "no_carrier_reply",
                 "outbound": ["no_offer"],
                 "customer.outcome": "no_offer",
             },
@@ -764,6 +772,73 @@ _ALL = [
             "elbflug-air-freight@hackloop.mail": {"delay": 30},
         },
         title="Tariff-only offer: booked by mail, confirmed only when the airline confirms",
+    ),
+    scenario(
+        "email_rate",
+        [rfq(body=KTM_BODY, subject="Quote FRA-KTM", customer=KTM_CUSTOMER)],
+        {
+            "rfq1": {
+                **BOOKED,
+                # No portal lane and no tariff for KTM. Himalaya's mailed price is used as it
+                # stands: an all-in total, nothing is added to it.
+                "quote.carrier": "Himalaya Bridge Air",
+                "quote.total": "1240.00",
+                "booking.portal_requests": 0,
+                "outbound": ["first_quote", "booking_submitted", "booking_confirmed"],
+            },
+            # Three airlines and the rate desk are asked; one booking request follows.
+            "_totals": {"carrier_mails_sent": 5, "bookings_created": 0},
+        },
+        airlines={ZEPHYR: {}, HIMALAYA: {"bid": {"price": "1240.00"}, "delay": 30}, PAMPERO: {}},
+        title="No portal or tariff price: an airline's mailed rate is quoted and booked by mail",
+    ),
+    scenario(
+        "email_rate_rate_desk",
+        [rfq(body=KTM_BODY, subject="Quote FRA-KTM", customer=KTM_CUSTOMER)],
+        {
+            "rfq1": {
+                **BOOKED,
+                "quote.carrier": "Pampero Air Cargo",
+                "quote.total": "1180.00",
+                "outbound": ["first_quote", "booking_submitted", "booking_confirmed"],
+            }
+        },
+        airlines={
+            RATE_DESK: {
+                "bid": {
+                    "body": "Pampero Air Cargo offers {origin} to {destination}, {weight} kg "
+                    "at EUR 1,180.00 all-in, valid until {valid}."
+                }
+            },
+            PAMPERO: {"delay": 30},
+        },
+        title="The rate desk answers for an airline: quoted, and booked with that airline",
+    ),
+    scenario(
+        "email_rate_unusable_replies",
+        [rfq(body=KTM_BODY, subject="Quote FRA-KTM", customer=KTM_CUSTOMER)],
+        {
+            "rfq1": {
+                "stage": "exception",
+                "blocked_on": "no_carrier_reply",
+                "quote": None,
+                "outbound": ["no_offer"],
+                "customer.outcome": "no_offer",
+            },
+            "_totals": {"price_in_non_quote": 0},
+        },
+        airlines={
+            ZEPHYR: {"bid": {"body": "FRA to ULN, 300 kg: EUR 500.00 all-in, valid {valid}."}},
+            HIMALAYA: {"bid": {"body": "{origin} to {destination}: EUR 3.10 per kg plus fuel."}},
+            PAMPERO: {
+                "bid": {
+                    "body": "{origin} to {destination}, {weight} kg: EUR 900.00 all-in, "
+                    "valid until {yesterday}."
+                }
+            },
+            RATE_DESK: {"bid": {"body": "We can do EUR 700.00 all-in for {origin}-{destination}."}},
+        },
+        title="Replies for another route, without all charges, expired or unbookable: no quote",
     ),
     scenario(
         "email_booking_silent",

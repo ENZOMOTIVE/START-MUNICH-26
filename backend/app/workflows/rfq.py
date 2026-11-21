@@ -21,15 +21,25 @@ from app.db.models import ActionIntentRow, MessageRow, QuoteDecisionRow, RfqRow,
 from app.platform import get_adapters
 from app.platform.decisions import reply_text
 from app.platform.outbox import deliver_intent
+from app.platform.routing import RATE_DESK_ADDRESS
 from app.pricing.pickup import PickupQuote, airport_for_zone
 from app.pricing.quote_models import Evidence
 from app.pricing.tariffs import load_fixture_candidates
 from app.workflows import documents, replies
-from app.workflows.extract import REQUIRED, assess_dg, merge, model_fill, truckers_for_zone
+from app.workflows.extract import (
+    REQUIRED,
+    airlines_for,
+    assess_dg,
+    merge,
+    model_fill,
+    truckers_for_zone,
+)
 from app.workflows.selection import choose_offer_with_evidence
 
 RFQ_TTL = timedelta(minutes=6)
 WAITING_FOR_PICKUP = "waiting_for_carrier:pickup"
+WAITING_FOR_RATE = "waiting_for_carrier:rate"
+WAITING_FOR_CARRIER = (WAITING_FOR_PICKUP, WAITING_FOR_RATE)
 
 
 def _aware(dt: datetime) -> datetime:
@@ -379,8 +389,14 @@ def advance(db: Session, session: SessionRow, rfq: RfqRow, root: MessageRow, fou
         pickup = pickup_bid(db, session, rfq)
         if pickup is None and _ask_truckers(db, session, rfq):
             return session
-    session.exception = None if session.exception == WAITING_FOR_PICKUP else session.exception
     candidates = load_fixture_candidates(db, rfq, pickup=pickup)
+    priceable = pickup is not None or not rfq.pickup_required
+    if _sourced() and priceable and not any(c.complete for c in candidates):
+        # Neither the portal nor an approved tariff has a price: ask the carriers by mail.
+        return _ask_airlines(
+            db, session, rfq, dg["signals"] if dg["status"] == "documented" else []
+        )
+    session.exception = None if session.exception in WAITING_FOR_CARRIER else session.exception
     session.stage = "pricing"
     repositories.append_event(
         db,
@@ -438,7 +454,9 @@ def pickup_bid(db: Session, session: SessionRow, rfq: RfqRow) -> PickupQuote | N
     bids = [
         e.payload
         for e in repositories.events_for(db, session.id)
-        if e.type == "carrier_bid" and e.payload.get("currency") == "EUR"
+        if e.type == "carrier_bid"
+        and e.payload.get("kind") == "pickup"
+        and e.payload.get("currency") == "EUR"
     ]
     if not bids:
         return None
@@ -463,16 +481,7 @@ def _ask_truckers(db: Session, session: SessionRow, rfq: RfqRow) -> bool:
     mail = replies.pickup_enquiry(
         rfq.pickup_zone, airport, _weight(rfq.weight_kg), volume, str(rfq.id)[:13]
     )
-    asked = []
-    for name, email in truckers:
-        intent, created = outbound(
-            db, rfq, f"enquiry:{rfq.id}:{email}"[:128], "reply", None, mail, to=email
-        )
-        asked += [name] if created else []
-        try:
-            send(db, intent)
-        except DomainError:
-            continue  # the outbox recorded why; the other truckers are still asked
+    asked = _enquire(db, rfq, "enquiry", truckers, mail)
     session.stage = "pricing"
     session.exception = WAITING_FOR_PICKUP
     if asked:
@@ -485,11 +494,46 @@ def _ask_truckers(db: Session, session: SessionRow, rfq: RfqRow) -> bool:
     return True
 
 
+def _enquire(db: Session, rfq: RfqRow, prefix: str, carriers, mail: dict) -> list[str]:
+    """One enquiry per carrier, ever. Returns the names asked just now."""
+    asked = []
+    for name, email in carriers:
+        intent, created = outbound(
+            db, rfq, f"{prefix}:{rfq.id}:{email}"[:128], "reply", None, mail, to=email
+        )
+        asked += [name] if created else []
+        try:
+            send(db, intent)
+        except DomainError:
+            continue  # the outbox recorded why; the other carriers are still asked
+    return asked
+
+
+def _ask_airlines(db: Session, session: SessionRow, rfq: RfqRow, dangerous: list[str]):
+    """Ask up to three listed airlines that serve the destination, and the rate desk."""
+    sources = [*airlines_for(rfq.destination)[:3], ("Rate desk", RATE_DESK_ADDRESS)]
+    volume = _weight(rfq.volume_m3) if rfq.volume_m3 is not None else None
+    mail = replies.rate_enquiry(
+        rfq.origin, rfq.destination, _weight(rfq.weight_kg), volume, dangerous, str(rfq.id)[:13]
+    )
+    asked = _enquire(db, rfq, "rate-enquiry", sources, mail)
+    session.stage = "pricing"
+    session.exception = WAITING_FOR_RATE
+    if asked:
+        repositories.append_event(
+            db,
+            session.id,
+            "carrier_enquiry_sent",
+            {"kind": "rate", "carriers": asked, "simulated": True},
+        )
+    return session
+
+
 def close_overdue_sourcing(db: Session, margin: timedelta = timedelta(seconds=60)) -> int:
-    """Tell the customer when no trucker answered in time. Returns how many still wait."""
+    """Tell the customer when no carrier answered in time. Returns how many still wait."""
     waiting = 0
     for session in db.scalars(
-        select(SessionRow).where(SessionRow.exception == WAITING_FOR_PICKUP)
+        select(SessionRow).where(SessionRow.exception.in_(WAITING_FOR_CARRIER))
     ).all():
         rfq = db.get(RfqRow, session.rfq_id)
         if rfq is None or rfq.status != "pending":
@@ -498,13 +542,15 @@ def close_overdue_sourcing(db: Session, margin: timedelta = timedelta(seconds=60
             waiting += 1
             continue
         root = db.get(MessageRow, rfq.message_id)
+        asked = "trucker" if session.exception == WAITING_FOR_PICKUP else "airline"
+        what = "a pickup price" if asked == "trucker" else "a rate"
         _fail(db, session, rfq, "no_carrier_reply")
         mail = replies.no_offer(
             customer_name(root),
             root.subject,
             rfq.origin,
             rfq.destination,
-            "no trucker has confirmed a pickup price in time",
+            f"no {asked} has confirmed {what} in time",
         )
         intent, _ = outbound(
             db, rfq, f"reply:{rfq.id}:no_offer", "reply", latest_customer_mail(db, root), mail

@@ -130,6 +130,25 @@ def pickup_enquiry(zone, airport, weight_kg, volume_m3, ref: str) -> dict:
     return {"purpose": "carrier_enquiry", "subject": subject, "body": body}
 
 
+def rate_enquiry(origin, destination, weight_kg, volume_m3, dangerous: list[str], ref: str) -> dict:
+    """To an airline or the rate desk. `ref` in the subject matches the reply to the request."""
+    cargo = f"{weight_kg} kg" + (f", {volume_m3} cbm" if volume_m3 else "")
+    if dangerous:
+        cargo += f"\nDangerous goods: {', '.join(dangerous)}"
+    body = "\n\n".join(
+        [
+            "Hello,",
+            "Please send us your rate for one air freight shipment:",
+            f"Route: {origin} to {destination}\nCargo: {cargo}",
+            "Please reply to this email with one all-in price and its currency, restate the "
+            "route, and tell us until when the price is valid.",
+            SIGNATURE,
+        ]
+    )
+    subject = f"Rate enquiry {origin}-{destination}, {weight_kg} kg [ref {ref}]"
+    return {"purpose": "rate_enquiry", "subject": subject, "body": body}
+
+
 def carrier_booking_request(
     origin, destination, weight_kg, total, currency, team_reference
 ) -> dict:
