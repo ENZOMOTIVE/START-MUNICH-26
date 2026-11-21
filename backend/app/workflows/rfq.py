@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -9,8 +9,8 @@ from app.db import repositories
 from app.db.models import ActionIntentRow, MessageRow, QuoteDecisionRow, RfqRow, SessionRow
 from app.platform.mailbox import FakeMailbox
 from app.platform.outbox import deliver_intent
-from app.pricing.calculator import select_offer
 from app.pricing.tariffs import load_fixture_candidates
+from app.workflows.selection import choose_offer_with_evidence
 
 RFQ_TTL = timedelta(minutes=6)
 
@@ -26,10 +26,60 @@ def _parse_rfq_block(message: MessageRow) -> dict | None:
     block = raw.get("rfq")
     if not isinstance(block, dict):
         return None
-    missing = not block.get("origin") or not block.get("destination")
-    if missing or block.get("weight_kg") in (None, ""):
+    origin = str(block.get("origin") or "").strip().upper()
+    destination = str(block.get("destination") or "").strip().upper()
+    if not origin or not destination or block.get("weight_kg") in (None, ""):
         return None
-    return block
+    if len(origin) > 8 or len(destination) > 8:
+        raise DomainError("invalid_route")
+
+    try:
+        weight_kg = Decimal(str(block["weight_kg"]))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise DomainError("invalid_weight") from exc
+    if not weight_kg.is_finite() or weight_kg <= 0:
+        raise DomainError("invalid_weight")
+
+    volume_m3 = None
+    if block.get("volume_m3") not in (None, ""):
+        try:
+            volume_m3 = Decimal(str(block["volume_m3"]))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise DomainError("invalid_volume") from exc
+        if not volume_m3.is_finite() or volume_m3 <= 0:
+            raise DomainError("invalid_volume")
+
+    pickup_required = block.get("pickup_required", False)
+    if isinstance(pickup_required, str):
+        value = pickup_required.strip().lower()
+        if value not in {"true", "false", "1", "0", "yes", "no"}:
+            raise DomainError("invalid_pickup_required")
+        pickup_required = value in {"true", "1", "yes"}
+    elif not isinstance(pickup_required, bool):
+        raise DomainError("invalid_pickup_required")
+
+    service_intent = str(block.get("service_intent") or "cheapest").strip().lower()
+    if service_intent not in {"cheapest", "fastest"}:
+        raise DomainError("invalid_service_intent")
+
+    pickup_zone = block.get("pickup_zone")
+    if pickup_zone not in (None, ""):
+        pickup_zone = str(pickup_zone).strip().upper()
+        if not pickup_zone:
+            pickup_zone = None
+        elif len(pickup_zone) > 8:
+            raise DomainError("invalid_pickup_zone")
+
+    return {
+        **block,
+        "origin": origin,
+        "destination": destination,
+        "weight_kg": weight_kg,
+        "volume_m3": volume_m3,
+        "pickup_required": pickup_required,
+        "pickup_zone": pickup_zone,
+        "service_intent": service_intent,
+    }
 
 
 def handle_rfq(db: Session, message: MessageRow) -> SessionRow:
@@ -50,6 +100,8 @@ def handle_rfq(db: Session, message: MessageRow) -> SessionRow:
         "quoted",
         "accepted",
         "booked",
+        "expired",
+        "failed",
     }:
         return existing_session
     if rfq is None:
@@ -59,18 +111,15 @@ def handle_rfq(db: Session, message: MessageRow) -> SessionRow:
             thread_id=message.thread_id,
             origin=str(block["origin"]),
             destination=str(block["destination"]),
-            weight_kg=Decimal(str(block["weight_kg"])),
-            volume_m3=(
-                Decimal(str(block["volume_m3"]))
-                if block.get("volume_m3") not in (None, "")
-                else None
-            ),
-            pickup_required=bool(block.get("pickup_required", False)),
+            weight_kg=block["weight_kg"],
+            volume_m3=block["volume_m3"],
+            pickup_required=block["pickup_required"],
             pickup_zone=block.get("pickup_zone"),
             service_intent=str(block.get("service_intent") or "cheapest"),
             received_at=received_at,
             expires_at=received_at + RFQ_TTL,
             status="pending",
+            source_ref=f"message:{message.external_id}",
         )
         db.add(rfq)
         db.flush()
@@ -102,6 +151,11 @@ def handle_rfq(db: Session, message: MessageRow) -> SessionRow:
             "origin": rfq.origin,
             "destination": rfq.destination,
             "weight_kg": str(rfq.weight_kg),
+            "volume_m3": str(rfq.volume_m3) if rfq.volume_m3 is not None else None,
+            "pickup_required": rfq.pickup_required,
+            "pickup_zone": rfq.pickup_zone,
+            "service_intent": rfq.service_intent,
+            "source_ref": rfq.source_ref,
             "simulated": True,
         },
     )
@@ -115,7 +169,20 @@ def handle_rfq(db: Session, message: MessageRow) -> SessionRow:
         {"count": len(candidates), "simulated": True},
     )
 
-    selected = select_offer(candidates, rfq.service_intent)
+    try:
+        selected, evidence = choose_offer_with_evidence(candidates, rfq.service_intent)
+    except DomainError as exc:
+        session.stage = "exception"
+        session.exception = exc.code
+        rfq.status = "expired" if exc.code == "offers_expired" else "failed"
+        repositories.append_event(
+            db,
+            session.id,
+            "exception",
+            {"code": exc.code, "simulated": True},
+        )
+        raise
+
     repositories.append_event(
         db,
         session.id,
@@ -125,14 +192,23 @@ def handle_rfq(db: Session, message: MessageRow) -> SessionRow:
             "carrier": selected.carrier,
             "total": str(selected.total),
             "currency": selected.currency,
+            "rate_id": selected.rate_id,
+            "evidence": evidence,
             "simulated": True,
         },
     )
-    commit_first_quote(db, session, rfq, selected)
+    commit_first_quote(db, session, rfq, selected, evidence=evidence)
     return session
 
 
-def commit_first_quote(db: Session, session: SessionRow, rfq: RfqRow, candidate):
+def commit_first_quote(
+    db: Session,
+    session: SessionRow,
+    rfq: RfqRow,
+    candidate,
+    *,
+    evidence: dict | None = None,
+):
     now = datetime.now(UTC)
     if session.paused:
         session.exception = "session_paused"
@@ -143,10 +219,22 @@ def commit_first_quote(db: Session, session: SessionRow, rfq: RfqRow, candidate)
     if now >= _aware(rfq.expires_at):
         rfq.status = "expired"
         session.exception = "expired"
+        session.stage = "exception"
         repositories.append_event(
             db, session.id, "quote_blocked", {"reason": "expired", "simulated": True}
         )
         raise DomainError("expired")
+    if candidate.valid_until is not None and now >= _aware(candidate.valid_until):
+        rfq.status = "expired"
+        session.exception = "offer_expired"
+        session.stage = "exception"
+        repositories.append_event(
+            db,
+            session.id,
+            "quote_blocked",
+            {"reason": "offer_expired", "simulated": True},
+        )
+        raise DomainError("offer_expired")
 
     existing_intent = repositories.first_quote_intent(db, rfq.id)
     if existing_intent is not None:
@@ -160,7 +248,10 @@ def commit_first_quote(db: Session, session: SessionRow, rfq: RfqRow, candidate)
                 total=candidate.total,
                 currency=candidate.currency,
                 decided_at=now,
-                evidence={
+                evidence=evidence
+                or {
+                    "objective": rfq.service_intent,
+                    "rule": "selected_complete_candidate",
                     "candidate_id": str(candidate.id),
                     "source_ref": candidate.source_ref,
                     "source_version": candidate.source_version,
@@ -177,10 +268,15 @@ def commit_first_quote(db: Session, session: SessionRow, rfq: RfqRow, candidate)
                 action_key=f"quote:{rfq.id}",
                 kind="first_quote",
                 payload={
+                    "rfq_id": str(rfq.id),
                     "thread_id": rfq.thread_id,
+                    "quote_decision_id": str(decision.id),
+                    "candidate_id": str(candidate.id),
+                    "rate_id": candidate.rate_id,
                     "total": str(candidate.total),
                     "currency": candidate.currency,
                     "carrier": candidate.carrier,
+                    "evidence": decision.evidence,
                     "simulated": True,
                 },
                 workflow_status="quoted",
@@ -199,5 +295,18 @@ def commit_first_quote(db: Session, session: SessionRow, rfq: RfqRow, candidate)
     deliver_intent(db, intent, FakeMailbox())
     rfq.status = "quoted"
     session.stage = "quoted"
-    repositories.append_event(db, session.id, "quote_recorded", {"simulated": True})
+    repositories.append_event(
+        db,
+        session.id,
+        "quote_recorded",
+        {
+            "quote_decision_id": str(decision.id),
+            "candidate_id": str(candidate.id),
+            "rate_id": candidate.rate_id,
+            "total": str(candidate.total),
+            "currency": candidate.currency,
+            "evidence": decision.evidence,
+            "simulated": True,
+        },
+    )
     return decision, intent

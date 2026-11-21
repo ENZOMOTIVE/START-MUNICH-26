@@ -98,6 +98,12 @@ def first_quote_intent(db: Session, rfq_id: UUID) -> ActionIntentRow | None:
     ).scalar_one_or_none()
 
 
+def action_intent_by_key(db: Session, action_key: str) -> ActionIntentRow | None:
+    return db.execute(
+        select(ActionIntentRow).where(ActionIntentRow.action_key == action_key)
+    ).scalar_one_or_none()
+
+
 def append_event(
     db: Session,
     session_id: UUID,

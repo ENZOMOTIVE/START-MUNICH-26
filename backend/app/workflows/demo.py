@@ -1,5 +1,4 @@
 import json
-import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -50,7 +49,6 @@ def run_demo(db: Session):
     if get_settings().app_mode != "demo":
         raise DomainError("demo_mode_only")
 
-    stamp = uuid.uuid4().hex[:8]
     now = datetime.now(UTC)
     root = get_settings().fixtures_path()
     rfq_data = _load_json(root / "messages" / "demo-rfq.json", _DEFAULT_RFQ)
@@ -60,7 +58,7 @@ def run_demo(db: Session):
     if scenario_path.is_file():
         json.loads(scenario_path.read_text())
 
-    thread_id = f"{rfq_data.get('thread_id', 'demo-thread')}-{stamp}"
+    thread_id = rfq_data.get("thread_id", "demo-thread")
     raw = dict(rfq_data.get("raw") or {})
     if "rfq" not in raw:
         raw["rfq"] = rfq_data.get("rfq") or _DEFAULT_RFQ["rfq"]
@@ -69,7 +67,7 @@ def run_demo(db: Session):
     message, _ = ingest_message(
         db,
         {
-            "external_id": f"{rfq_data.get('external_id', 'demo-rfq')}-{stamp}",
+            "external_id": rfq_data.get("external_id", "demo-rfq"),
             "thread_id": thread_id,
             "sender": rfq_data.get("sender", "shipper@example.com"),
             "recipient": rfq_data.get("recipient", "desk@example.com"),
@@ -89,7 +87,7 @@ def run_demo(db: Session):
         ingest_message(
             db,
             {
-                "external_id": f"{acc_data.get('external_id', 'demo-acceptance')}-{stamp}",
+                "external_id": acc_data.get("external_id", "demo-acceptance"),
                 "thread_id": thread_id,
                 "sender": acc_data.get("sender", "shipper@example.com"),
                 "recipient": acc_data.get("recipient", "desk@example.com"),
