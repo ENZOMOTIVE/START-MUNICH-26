@@ -15,9 +15,9 @@ from app.core.errors import DomainError, NotFoundError
 from app.crm import queries
 from app.crm.queries import SessionDetail, SessionListItem
 from app.db import repositories
-from app.db.models import ActionIntentRow, GatewayUsageRow, MessageRow, SessionRow
+from app.db.models import ActionIntentRow, GatewayUsageRow, MessageRow, RfqRow, SessionRow
 from app.db.session import get_db, get_session_factory
-from app.platform import get_adapters
+from app.platform import get_adapters, runlimits
 from app.platform.outbox import deliver_intent
 from app.workflows import followup
 
@@ -98,6 +98,32 @@ def resume(session_id: UUID, db: Session = Depends(get_db)):
     return queries.session_detail(db, session.id)
 
 
+@router.post(
+    "/api/sessions/{session_id}/admit",
+    response_model=SessionDetail,
+    dependencies=[Depends(operator)],
+)
+def admit(session_id: UUID, db: Session = Depends(get_db)):
+    """Bounded live run: put this request's thread on the allowlist and release it."""
+    session = _session(db, session_id)
+    runlimits.admit(db, db.get(RfqRow, session.rfq_id).thread_id)
+    queries.resume_session(db, session_id)
+    return queries.session_detail(db, session.id)
+
+
+@router.get("/api/run")
+def run_status(db: Session = Depends(get_db)):
+    """Counters, limits and admitted threads of the bounded live run."""
+    return runlimits.status(db)
+
+
+@router.post("/api/run/stop", dependencies=[Depends(operator)])
+def run_stop(db: Session = Depends(get_db)):
+    """Stop every outbound action of this run. Pending work is kept, nothing is deleted."""
+    runlimits.stop(db)
+    return runlimits.status(db)
+
+
 class DraftEdit(BaseModel):
     subject: str | None = None
     body: str
@@ -164,6 +190,9 @@ def edit_draft(session_id: UUID, action_id: UUID, body: DraftEdit, db: Session =
     if intent.delivery_status not in {"pending", "failed"}:
         raise DomainError("not_a_draft", f"action is {intent.delivery_status}")
     payload = dict(intent.payload or {})
+    if intent.kind == "first_quote" and str(payload.get("total")) not in body.body:
+        # An edited quote goes out under the stored decision: its total may not change.
+        raise DomainError("edited_quote_changes_price", "keep the quoted total in the text")
     payload.update(body=body.body, subject=body.subject or payload.get("subject"), _edited=True)
     intent.payload = payload
     flag_modified(intent, "payload")
