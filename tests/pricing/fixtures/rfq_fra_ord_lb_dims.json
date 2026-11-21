@@ -1,5 +1,5 @@
 {
- "_note": "Unit-conversion fixture: 176.37 lb (= 79.9997 kg) and 2 pieces 60x50x40 cm (= 0.24 m3 -> 40.08 kg vol), airport-to-airport FRA->ORD, fastest.",
+ "_note": "Unit-conversion fixture: 176.37 lb (= 80.0001 kg) and 2 pieces 60x50x40 cm (= 0.24 m3 -> 40.08 kg vol), airport-to-airport FRA->ORD, fastest.",
  "origin": "FRA",
  "destination": "ORD",
  "weight": {"value": "176.37", "unit": "lb"},
