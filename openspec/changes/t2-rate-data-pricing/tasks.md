@@ -38,3 +38,11 @@
 ## 6. Handoff
 - [x] 6.1 Export RateCandidate records for a validated RFQ fixture to T3 — `pricing/data/sample_candidates_cgn_del_live.json`
 - [x] 6.2 Short README: how to run ingest, refresh portal, price an RFQ
+
+## 7. Align to team scaffold (21 Nov)
+
+- [x] 7.1 Move engine/portal/pickup into `backend/app/pricing/`; parser into `backend/app/pricing/parsers/` (follow-up)
+- [x] 7.2 Map output to team `RateCandidate`/`ChargeLine` (`contract.py`)
+- [x] 7.3 Fixtures-first loader from `FIXTURES_DIR`; demo acceptance Yellowtail 412.50 (`tests/pricing/test_t2_acceptance.py`)
+- [x] 7.4 Live portal calculator via GET `/v1/portal/rates`, gated by `live_allowed()`, simulated=false
+- [ ] 7.5 T3 sign-off on consuming `RateCandidate` (incl. `complete:false` for pickup legs without a trucker price)

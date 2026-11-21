@@ -56,3 +56,12 @@ No tariff prices trucking. The truck cost comes from a trucker bid / human as a
 ## Reuse
 Port and harden the existing parsers/engine from the earlier prototype
 (`app/tariffs/*`, `app/pricing.py`, `app/refdata.py`, `app/portal_check.py`).
+
+## Update (21 Nov, aligned to team scaffold)
+
+Canonical home is now `backend/app/pricing/` (per `docs/tasks/T2.md`); root `pricing/` and `tests/pricing/`
+were removed. Output is the team contract `app.contracts.models.RateCandidate` / `ChargeLine` (money as
+strings); the old `eligible/bookable/lane/dataset_version` fields are internal only (`PricedOption`) and are
+mapped in `contract.py` (`dataset_version -> source_version`, incomplete -> `complete: false`).
+Demo prefers fixtures (`fixtures/rates/demo-fra-lax.json`, Yellowtail 412.50). The full tariff parser lives
+in `backend/app/pricing/parsers/` as a follow-up, not on the acceptance path.
