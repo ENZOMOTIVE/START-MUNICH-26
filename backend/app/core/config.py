@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     frontend_origin: str = "http://127.0.0.1:5173"
     hackathon_api_base: str = "https://api.start-hack.5u.ai"
     hackathon_api_key: str = ""
+    team_mailbox: str = "free-candy@hackloop.mail"
+    hackathon_docs_url: str = "https://api.start-hack.5u.ai/docs"
+    hackathon_portal_url: str = "https://start-hack.5u.ai/portal/ui"
+    hackathon_board_url: str = "https://api.start-hack.5u.ai/board"
+    hackathon_gateway_base: str = "https://api.start-hack.5u.ai/v1/gateway"
     gateway_openai_key: str = ""
     worker_id: str = Field(default="worker-1")
     job_poll_seconds: float = 0.5

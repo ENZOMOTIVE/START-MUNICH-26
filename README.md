@@ -28,6 +28,7 @@ make demo       # POST /internal/demo/run (simulated happy path)
 make test       # postgres + pytest
 make lint       # ruff
 make typecheck  # frontend pnpm typecheck (Python: use make lint)
+make quality-data # audit demo fixtures against read-only starter-kit inputs
 make logs
 make down       # docker compose down  (does not pass -v; data volume kept)
 make openapi    # export OpenAPI into frontend/
