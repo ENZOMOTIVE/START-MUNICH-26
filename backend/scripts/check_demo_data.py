@@ -13,7 +13,6 @@ import sys
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "fixtures"
 STARTER_KIT = ROOT / "starter-kit"
@@ -142,7 +141,9 @@ def audit() -> dict[str, list[str]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Audit demo fixtures against starter-kit inputs.")
-    parser.add_argument("--strict", action="store_true", help="return a non-zero exit code on errors")
+    parser.add_argument(
+        "--strict", action="store_true", help="return a non-zero exit code on errors"
+    )
     args = parser.parse_args()
     report = audit()
     print(json.dumps(report, indent=2))
