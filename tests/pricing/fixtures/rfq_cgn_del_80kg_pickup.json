@@ -1,0 +1,8 @@
+{
+ "_note": "Validated RFQ fixture for the T2->T3 handoff: door pickup in Cologne (zone 50 -> CGN), 80 kg, 0.2 m3, cheapest.",
+ "pickup_postcode": "50667",
+ "destination": "DEL",
+ "weight": {"value": "80", "unit": "kg"},
+ "volume": {"value": "0.2", "unit": "m3"},
+ "prefer": "cheapest"
+}

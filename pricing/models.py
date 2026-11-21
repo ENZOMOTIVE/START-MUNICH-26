@@ -85,7 +85,7 @@ class RateCandidate:
     origin: str
     destination: str
     source: Source
-    total: Decimal | None               # all-in EUR, quantized to cents (None if incomplete)
+    total: Decimal | None               # all-in EUR incl. pickup, quantized to cents (None if incomplete)
     currency: str = "EUR"
     charges: list[ChargeLine] = field(default_factory=list)
     chargeable_weight_kg: Decimal | None = None
@@ -100,6 +100,7 @@ class RateCandidate:
     source_total: Decimal | None = None   # carrier price in its own currency, before pickup
     source_currency: str | None = None
     fx_eur_per_unit: Decimal | None = None
+    air_total: Decimal | None = None      # air leg only (freight+fuel+security) in EUR, quantized
     pivoted: bool = False
     break_kg: int | None = None
     complete: bool = True
@@ -139,6 +140,7 @@ class RateCandidate:
             "rate_id": self.rate_id,
             "valid_until": self.valid_until.isoformat() if self.valid_until else None,
             "dataset_version": self.dataset_version,
+            "air_total": str(self.air_total) if self.air_total is not None else None,
             "source_total": str(self.source_total) if self.source_total is not None else None,
             "source_currency": self.source_currency,
             "fx_eur_per_unit": dstr(self.fx_eur_per_unit),
