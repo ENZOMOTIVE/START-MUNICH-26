@@ -1,8 +1,0 @@
-# T2 pricing deps (system: poppler-utils for pdftotext [optional, pdfplumber fallback], tesseract-ocr for scans)
-openpyxl>=3.1
-pdfplumber>=0.11
-python-docx>=1.1
-pillow>=10
-httpx>=0.27
-pytest>=8
-pytest-asyncio>=0.23

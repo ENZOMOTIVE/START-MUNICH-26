@@ -18,6 +18,14 @@ dev = [
   "pytest",
   "ruff",
 ]
+# Follow-up tariff parser (app/pricing/parsers). NOT needed for `make demo` / T2 acceptance.
+# Install with: uv sync --group parsers   (system: tesseract-ocr, poppler-utils for the scans/PDFs)
+parsers = [
+  "openpyxl>=3.1",
+  "pdfplumber>=0.11",
+  "python-docx>=1.1",
+  "pillow>=10",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

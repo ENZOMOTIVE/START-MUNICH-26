@@ -4,8 +4,8 @@ from decimal import Decimal
 
 import pytest
 
-from pricing.engine import PriceRequest, applicable_break, price_lane, tariff_candidate
-from pricing.pickup import PickupQuote, apply_pickup
+from app.pricing.engine import PriceRequest, applicable_break, price_lane, tariff_candidate
+from app.pricing.pickup import PickupQuote, apply_pickup
 
 from .conftest import make_lane
 

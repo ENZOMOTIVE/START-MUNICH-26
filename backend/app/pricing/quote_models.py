@@ -1,4 +1,4 @@
-"""Contracts. RateCandidate is the T2 -> T3 handoff: T3 quotes and books from it without re-deriving a price."""
+"""Contracts. PricedOption is the T2 -> T3 handoff: T3 quotes and books from it without re-deriving a price."""
 from __future__ import annotations
 
 import datetime as dt
@@ -56,7 +56,7 @@ class ReviewException:
 
 
 @dataclass(frozen=True)
-class ChargeLine:
+class PricedCharge:
     code: str                           # air_freight | fuel | security | air_all_in | pickup | fx_note
     description: str
     amount: Decimal                     # exact (unrounded) amount in `currency`
@@ -80,14 +80,14 @@ class ChargeLine:
 
 
 @dataclass
-class RateCandidate:
+class PricedOption:
     carrier: str
     origin: str
     destination: str
     source: Source
     total: Decimal | None               # all-in EUR incl. pickup, quantized to cents (None if incomplete)
     currency: str = "EUR"
-    charges: list[ChargeLine] = field(default_factory=list)
+    charges: list[PricedCharge] = field(default_factory=list)
     chargeable_weight_kg: Decimal | None = None
     billed_weight_kg: Decimal | None = None
     transit_days: int | None = None

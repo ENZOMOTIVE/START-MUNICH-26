@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 
-from ..models import Evidence, ReviewException
+from ..quote_models import Evidence, ReviewException
 from ..money import MoneyError, parse_number
 from .base import Field, ParsedSet, Row
 

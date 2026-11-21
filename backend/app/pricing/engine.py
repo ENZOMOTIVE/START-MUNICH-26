@@ -19,9 +19,9 @@ import datetime as dt
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from .models import ChargeLine, Evidence, RateCandidate
+from .quote_models import PricedCharge, Evidence, PricedOption
 from .money import D, chargeable_weight, q2, to_kg, to_m3, volume_from_dims
-from .tariffs.base import LaneRate
+from .parsers.base import LaneRate
 
 
 @dataclass(frozen=True)
@@ -130,7 +130,7 @@ def price_lane(lane: LaneRate, gross_kg, volume_m3=0, pivot: bool = True,
 
 
 def tariff_candidate(lane: LaneRate, req: PriceRequest, pivot: bool = True,
-                     rounding: str | None = None) -> RateCandidate:
+                     rounding: str | None = None) -> PricedOption:
     from .money import fx_to_eur
     p = price_lane(lane, req.gross_kg, req.volume_m3, pivot, rounding)
     o = p.best
@@ -140,20 +140,20 @@ def tariff_candidate(lane: LaneRate, req: PriceRequest, pivot: bool = True,
     if lane.currency != "EUR":
         missing.append(f"fx:{lane.currency}")   # sheet gives no FX: never guess one
     charges = [
-        ChargeLine("air_freight", f"Air freight {o.billed_kg} kg x {o.rate}/kg (break {o.break_kg} kg)" +
+        PricedCharge("air_freight", f"Air freight {o.billed_kg} kg x {o.rate}/kg (break {o.break_kg} kg)" +
                    (f", minimum {lane.min_charge} applied" if o.min_applied else ""), o.freight, lane.currency,
                    o.billed_kg, o.rate, evidence=ev(f"break_{o.break_kg}") if not o.min_applied else ev("min_charge")),
-        ChargeLine("fuel", f"Fuel surcharge {lane.fuel_per_kg}/kg", o.fuel, lane.currency,
+        PricedCharge("fuel", f"Fuel surcharge {lane.fuel_per_kg}/kg", o.fuel, lane.currency,
                    o.billed_kg if lane.surcharge_basis == "billed" else D(req.gross_kg), lane.fuel_per_kg,
                    evidence=ev("fuel_per_kg")),
-        ChargeLine("security", f"Security surcharge {lane.security_per_kg}/kg", o.security, lane.currency,
+        PricedCharge("security", f"Security surcharge {lane.security_per_kg}/kg", o.security, lane.currency,
                    o.billed_kg if lane.surcharge_basis == "billed" else D(req.gross_kg), lane.security_per_kg,
                    evidence=ev("security_per_kg")),
     ]
     air = None
     if not missing:
         air = q2(fx_to_eur(o.total, lane.currency, fx))
-    c = RateCandidate(
+    c = PricedOption(
         carrier=lane.carrier, origin=lane.origin, destination=lane.destination, source="tariff",
         total=None, charges=charges, chargeable_weight_kg=p.chargeable_kg, billed_weight_kg=o.billed_kg,
         transit_days=lane.transit_days, rate_id=None, valid_until=None, dataset_version=lane.version,

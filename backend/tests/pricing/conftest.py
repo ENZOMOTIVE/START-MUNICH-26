@@ -1,22 +1,23 @@
 import datetime as dt
-import sys
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+ROOT = Path(__file__).resolve().parents[3]          # repo root (starter-kit/ lives here)
 
-from pricing.tariffs.base import LaneRate  # noqa: E402
-from pricing.tariffs.ingest import ingest  # noqa: E402
+from app.pricing.parsers.base import LaneRate  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture(scope="session")
 def kit_results():
+    # Follow-up parser (not on the T2 acceptance path): needs the optional `parsers` dep group.
+    for mod in ("openpyxl", "pdfplumber", "docx", "PIL"):
+        pytest.importorskip(mod)
+    from app.pricing.parsers.ingest import ingest
+
     results, other = ingest(ROOT / "starter-kit")
     return results, other
 

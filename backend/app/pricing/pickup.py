@@ -12,14 +12,18 @@ from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 
-from . import config
-from .models import ChargeLine, Evidence, RateCandidate
+from . import settings as config
+from .quote_models import PricedCharge, Evidence, PricedOption
 from .money import D, fx_to_eur, q2
 
 
 @lru_cache
 def zones(kit: Path | None = None) -> dict[str, dict]:
+    """Zone table from starter-kit/pickup_zones.csv (read-only). Inside the api container starter-kit/ is
+    not mounted, so fall back to the byte-identical copy bundled in app/pricing/data/."""
     path = (kit or config.KIT_DIR) / "pickup_zones.csv"
+    if not path.is_file():
+        path = config.DATA_DIR / "pickup_zones.csv"
     out = {}
     with open(path, newline="", encoding="utf-8") as f:
         for r in csv.DictReader(f):
@@ -56,7 +60,7 @@ class PickupQuote:
         return fx_to_eur(D(self.cost), self.currency, self.fx_eur_per_unit)
 
 
-def apply_pickup(c: RateCandidate, pickup_zone: str | None, pickup: PickupQuote | None) -> RateCandidate:
+def apply_pickup(c: PricedOption, pickup_zone: str | None, pickup: PickupQuote | None) -> PricedOption:
     """Add the pickup leg exactly once and (re)compute the all-in total. Idempotent."""
     c.charges = [x for x in c.charges if x.code != "pickup"]
     c.missing = [m for m in c.missing if not m.startswith("pickup")]
@@ -76,7 +80,7 @@ def apply_pickup(c: RateCandidate, pickup_zone: str | None, pickup: PickupQuote 
             except ValueError:
                 c.missing.append("pickup_fx")
             else:
-                c.charges.append(ChargeLine(
+                c.charges.append(PricedCharge(
                     "pickup", f"Truck pickup zone {pickup.zone} -> {airport}" +
                     (f" ({pickup.trucker})" if pickup.trucker else ""), amt, "EUR",
                     evidence=pickup.evidence))

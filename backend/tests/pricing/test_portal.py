@@ -6,10 +6,10 @@ from decimal import Decimal
 
 import httpx
 
-from pricing.candidates import TariffBook, build_candidates, candidate_from_bid, rank
-from pricing.engine import PriceRequest
-from pricing.pickup import PickupQuote
-from pricing.portal import PortalClient, candidate_from_rate, portal_quotes
+from app.pricing.tariff_candidates import TariffBook, build_candidates, candidate_from_bid, rank
+from app.pricing.engine import PriceRequest
+from app.pricing.pickup import PickupQuote
+from app.pricing.portal_client import PortalClient, candidate_from_rate, portal_quotes
 
 NOW = dt.datetime(2026, 11, 21, 15, 0, tzinfo=dt.timezone.utc)
 LATER = (NOW + dt.timedelta(minutes=15)).isoformat()
@@ -96,7 +96,7 @@ def test_expired_rate_not_bookable():
     c = candidate_from_rate(rate_json("AA", "300.00", valid=old), Decimal("80"), now=NOW)
     assert "expired" in c.missing and not c.bookable(NOW) and not c.eligible(NOW)
     fresh = candidate_from_rate(rate_json("AA", "300.00"), Decimal("80"), now=NOW)
-    from pricing.pickup import apply_pickup
+    from app.pricing.pickup import apply_pickup
     apply_pickup(fresh, None, None)
     assert fresh.bookable(NOW) and fresh.eligible(NOW)
     assert not fresh.bookable(NOW + dt.timedelta(minutes=15))   # expires later
@@ -106,7 +106,7 @@ def test_missing_required_fields_block_complete():
     r = rate_json("AA", "300.00")
     del r["valid_until"]
     c = candidate_from_rate(r, Decimal("80"), now=NOW)
-    from pricing.pickup import apply_pickup
+    from app.pricing.pickup import apply_pickup
     apply_pickup(c, None, None)
     assert not c.complete and "valid_until" in c.missing
 

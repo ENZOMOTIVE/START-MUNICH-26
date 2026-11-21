@@ -6,11 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from pricing.tariffs import ocr
-from pricing.tariffs.ingest import ingest, ingest_group, resolve_validity
-from pricing.tariffs.store import TariffStore
+for _mod in ("openpyxl", "pdfplumber", "docx", "PIL"):   # optional `parsers` dep group (follow-up)
+    pytest.importorskip(_mod)
 
-from .conftest import ROOT
+from app.pricing.parsers import ocr  # noqa: E402
+from app.pricing.parsers.ingest import ingest, ingest_group, resolve_validity  # noqa: E402
+from app.pricing.parsers.store import TariffStore  # noqa: E402
+
+from .conftest import ROOT  # noqa: E402
 
 KIT = ROOT / "starter-kit"
 EXPECTED_LANES = {"Cobalt Skylift": 21, "Danube Wings Cargo": 9, "Elbflug Air Freight": 19,

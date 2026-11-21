@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from pricing.money import (D, MoneyError, chargeable_weight, fx_to_eur, parse_number, q2, to_kg, to_m3,
+from app.pricing.money import (D, MoneyError, chargeable_weight, fx_to_eur, parse_number, q2, to_kg, to_m3,
                            volume_from_dims)
 
 

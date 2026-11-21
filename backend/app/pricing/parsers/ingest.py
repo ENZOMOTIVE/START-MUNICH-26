@@ -1,7 +1,7 @@
 """Walk the kit, checksum + version every tariff set, read -> parse -> validate -> approved LaneRates or
 ReviewExceptions. No file is silently skipped: every file in the directory is accounted for in the report.
 
-    python -m pricing.tariffs.ingest [--kit DIR] [--store DIR] [--snapshot FILE] [--no-store]
+    python -m app.pricing.parsers.ingest [--kit DIR] [--store DIR] [--snapshot FILE] [--no-store]
 """
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 
-from .. import config
-from ..models import Evidence, ReviewException
+from .. import settings as config
+from ..quote_models import Evidence, ReviewException
 from ..money import MoneyError, parse_number
 from . import docx as _docx  # noqa: F401  (registers readers)
 from . import pdf as _pdf  # noqa: F401

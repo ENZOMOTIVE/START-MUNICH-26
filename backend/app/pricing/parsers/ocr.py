@@ -25,8 +25,8 @@ from collections import Counter
 from decimal import Decimal
 from pathlib import Path
 
-from ..config import MANUAL_DIR
-from ..models import Evidence, ReviewException
+from ..settings import MANUAL_DIR
+from ..quote_models import Evidence, ReviewException
 from ..money import parse_number
 from .base import Field, ParsedSet, Row
 

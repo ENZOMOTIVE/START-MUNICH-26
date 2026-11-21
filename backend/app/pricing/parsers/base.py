@@ -8,7 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Callable
 
-from ..models import Evidence, ReviewException
+from ..quote_models import Evidence, ReviewException
 from ..money import dstr
 
 

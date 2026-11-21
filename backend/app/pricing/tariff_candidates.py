@@ -1,6 +1,6 @@
 """Merge tariff + portal (+ carrier bids) into RateCandidates for T3, ranked by the customer's preference.
 
-    python -m pricing.candidates tests/pricing/fixtures/rfq_fra_ord_80kg.json [--live] [--pickup-cost 45.00]
+    python -m app.pricing.tariff_candidates tests/pricing/fixtures/rfq_cgn_del_80kg_pickup.json [--live] [--pickup-cost 45.00]
 """
 from __future__ import annotations
 
@@ -12,12 +12,12 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 
-from . import config
+from . import settings as config
 from .engine import PriceRequest, tariff_candidate
-from .models import ChargeLine, Evidence, RateCandidate, ReviewException
+from .quote_models import PricedCharge, Evidence, PricedOption, ReviewException
 from .money import D, MoneyError, fx_to_eur, q2
 from .pickup import PickupQuote, apply_pickup, airport_for_zone
-from .tariffs.base import LaneRate
+from .parsers.base import LaneRate
 
 
 class TariffBook:
@@ -36,12 +36,12 @@ class TariffBook:
 
     @classmethod
     def from_store(cls, root: Path | None = None) -> "TariffBook":
-        from .tariffs.store import TariffStore
+        from .parsers.store import TariffStore
         return cls(TariffStore(root or config.STORE_DIR).current_records())
 
     @classmethod
     def from_kit(cls, kit: Path | None = None) -> "TariffBook":
-        from .tariffs.ingest import ingest
+        from .parsers.ingest import ingest
         res, _ = ingest(kit)
         return cls([r for s in res for r in s.records])
 
@@ -52,7 +52,7 @@ class TariffBook:
 def candidate_from_bid(carrier: str, origin: str, dest: str, total, currency: str = "EUR", *,
                        fx_eur_per_unit=None, transit_days: int | None = None, chargeable_kg=None,
                        valid_until: dt.datetime | None = None, evidence: Evidence | None = None,
-                       includes: tuple[str, ...] = ("air_freight", "fuel", "security")) -> RateCandidate:
+                       includes: tuple[str, ...] = ("air_freight", "fuel", "security")) -> PricedOption:
     """A carrier's emailed all-in bid as a candidate (T3 parses the mail; this keeps one contract)."""
     missing = []
     if not {"air_freight", "fuel", "security"} <= set(includes):
@@ -63,8 +63,8 @@ def candidate_from_bid(carrier: str, origin: str, dest: str, total, currency: st
         air = fx_to_eur(tot, currency, D(fx_eur_per_unit) if fx_eur_per_unit is not None else None)
     except MoneyError:
         missing.append(f"fx:{currency}")
-    c = RateCandidate(carrier=carrier, origin=origin, destination=dest, source="bid", total=None,
-                      charges=[ChargeLine("air_all_in", f"{carrier} emailed bid", air, "EUR", evidence=evidence)]
+    c = PricedOption(carrier=carrier, origin=origin, destination=dest, source="bid", total=None,
+                      charges=[PricedCharge("air_all_in", f"{carrier} emailed bid", air, "EUR", evidence=evidence)]
                       if air is not None else [],
                       chargeable_weight_kg=D(chargeable_kg) if chargeable_kg is not None else None,
                       transit_days=transit_days, valid_until=valid_until, source_total=tot,
@@ -74,7 +74,7 @@ def candidate_from_bid(carrier: str, origin: str, dest: str, total, currency: st
     return c
 
 
-def rank(cands: list[RateCandidate], prefer: str = "cheapest") -> list[RateCandidate]:
+def rank(cands: list[PricedOption], prefer: str = "cheapest") -> list[PricedOption]:
     """Cheapest: by all-in total (air total when pickup still missing - identical pickup for all), then transit.
     Fastest: by transit days, then price. Deterministic tie-break on carrier name."""
     def price(c):
@@ -96,16 +96,16 @@ def rank(cands: list[RateCandidate], prefer: str = "cheapest") -> list[RateCandi
 @dataclass
 class CandidateSet:
     request: PriceRequest
-    candidates: list[RateCandidate] = field(default_factory=list)
+    candidates: list[PricedOption] = field(default_factory=list)
     exceptions: list[ReviewException] = field(default_factory=list)
     failures: list = field(default_factory=list)
     generated_at: dt.datetime | None = None
 
-    def eligible(self, now: dt.datetime | None = None) -> list[RateCandidate]:
+    def eligible(self, now: dt.datetime | None = None) -> list[PricedOption]:
         now = now or dt.datetime.now(dt.timezone.utc)
         return [c for c in self.candidates if c.eligible(now)]
 
-    def best(self, now: dt.datetime | None = None) -> RateCandidate | None:
+    def best(self, now: dt.datetime | None = None) -> PricedOption | None:
         e = rank(self.eligible(now), self.request.prefer)
         return e[0] if e else None
 
@@ -123,7 +123,7 @@ class CandidateSet:
 
 
 async def build_candidates(req: PriceRequest, book: TariffBook | None = None, portal=None, *,
-                           pickup: PickupQuote | None = None, bids: list[RateCandidate] | None = None,
+                           pickup: PickupQuote | None = None, bids: list[PricedOption] | None = None,
                            now: dt.datetime | None = None, pivot_probes: int = 1) -> CandidateSet:
     now = now or dt.datetime.now(dt.timezone.utc)
     cs = CandidateSet(req, generated_at=now)
@@ -140,12 +140,12 @@ async def build_candidates(req: PriceRequest, book: TariffBook | None = None, po
     req2 = PriceRequest(req.destination, req.gross_kg, req.volume_m3, origin, req.pickup_zone, req.prefer,
                         req.ship_date or now.date())
     cs.request = req2
-    cands: list[RateCandidate] = []
+    cands: list[PricedOption] = []
     if book is not None:
         for lane in book.lanes(origin, req.destination):
             cands.append(tariff_candidate(lane, req2))
     if portal is not None:
-        from .portal import portal_quotes
+        from .portal_client import portal_quotes
         pq = await portal_quotes(portal, origin, req.destination, req.gross_kg, req.volume_m3,
                                  pivot_probes=pivot_probes, now=now)
         cands += pq.candidates
@@ -178,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     async def run():
         portal = None
         if a.live:
-            from .portal import PortalClient
+            from .portal_client import PortalClient
             portal = PortalClient()
         try:
             return await build_candidates(req, book, portal, pickup=pickup)

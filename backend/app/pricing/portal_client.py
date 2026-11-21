@@ -8,7 +8,7 @@
 * `fx_eur_per_usd` (despite the name) = EUR per 1 unit of the returned `currency`.
 * A rate past `valid_until` is never presented as bookable.
 
-    python -m pricing.portal ports | brackets <airline> | rate <ORIG> <DEST> <airline> <kg> [m3]
+    python -m app.pricing.portal_client ports | brackets <airline> | rate <ORIG> <DEST> <airline> <kg> [m3]
 """
 from __future__ import annotations
 
@@ -21,11 +21,11 @@ import time
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from . import config
-from .models import ChargeLine, Evidence, RateCandidate
+from . import settings as config
+from .quote_models import PricedCharge, Evidence, PricedOption
 from .money import D, MoneyError, chargeable_weight, fx_to_eur, q2
 
-log = logging.getLogger("pricing.portal")
+log = logging.getLogger("app.pricing.portal_client")
 
 
 @dataclass
@@ -171,8 +171,8 @@ class PortalClient:
 
 
 def candidate_from_rate(r: dict, gross_kg, volume_m3=0, requested_kg=None, now: dt.datetime | None = None
-                        ) -> RateCandidate:
-    """Portal Rate JSON -> RateCandidate. Total = portal total (already air+fuel+security), FX'd to EUR."""
+                        ) -> PricedOption:
+    """Portal Rate JSON -> PricedOption. Total = portal total (already air+fuel+security), FX'd to EUR."""
     now = now or now_utc()
     missing: list[str] = []
     for k in ("rate_id", "total", "currency", "valid_until", "dataset_version"):
@@ -198,9 +198,9 @@ def candidate_from_rate(r: dict, gross_kg, volume_m3=0, requested_kg=None, now: 
         desc = f"Air freight all-in (freight+fuel+security) {r.get('airline')} portal rate"
         if cur != "EUR":
             desc += f" {total} {cur} x {fx} EUR/{cur}"
-        charges.append(ChargeLine("air_all_in", desc, air_eur, "EUR", billed, evidence=ev))
+        charges.append(PricedCharge("air_all_in", desc, air_eur, "EUR", billed, evidence=ev))
     pivoted = requested_kg is not None and D(requested_kg) > ch_ours
-    c = RateCandidate(
+    c = PricedOption(
         carrier=r.get("airline", "?"), carrier_code=r.get("airline_code"), origin=r.get("origin"),
         destination=r.get("destination"), source="portal", total=None, charges=charges,
         chargeable_weight_kg=ch_ours, billed_weight_kg=billed, transit_days=r.get("transit_days"),
@@ -221,7 +221,7 @@ def candidate_from_rate(r: dict, gross_kg, volume_m3=0, requested_kg=None, now: 
 
 @dataclass
 class PortalQuotes:
-    candidates: list[RateCandidate] = field(default_factory=list)
+    candidates: list[PricedOption] = field(default_factory=list)
     failures: list[PortalFailure] = field(default_factory=list)
     calls: int = 0
 
@@ -242,7 +242,7 @@ async def portal_quotes(client: PortalClient, origin: str, dest: str, gross_kg, 
         return out
     ch = chargeable_weight(gross_kg, volume_m3)
 
-    async def one(a: dict) -> RateCandidate | None:
+    async def one(a: dict) -> PricedOption | None:
         code = a["code"]
         try:
             r = await client.rate(origin, dest, code, gross_kg, volume_m3)
