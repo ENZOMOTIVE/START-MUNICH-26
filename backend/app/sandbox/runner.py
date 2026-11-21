@@ -58,14 +58,23 @@ _lock = threading.Lock()
 _STATUS = re.compile(r"update for booking \S+ is: (.+?) \(reported")
 
 
-def run(scenario_id: str, seed: int | None = None, until_s: int | None = None) -> dict:
-    scenario = SCENARIOS[scenario_id]
+def run(
+    scenario_id: str | dict,
+    seed: int | None = None,
+    until_s: int | None = None,
+    share_portal_cache: bool = True,
+) -> dict:
+    """`scenario_id` is a name from SCENARIOS or a scenario dict (used by focused tests).
+    `share_portal_cache=False` rebuilds the portal cache for every request, as the code did
+    before; it exists to measure the difference."""
+    scenario = SCENARIOS[scenario_id] if isinstance(scenario_id, str) else scenario_id
     seed = get_settings().simulation_seed if seed is None else seed
     factory = get_session_factory()
     with _lock:  # adapters and clock are process-wide, so one scenario at a time
         with factory() as db:
             base = repositories.get_cursor(db, CURSOR_NAME)
         world = World(scenario, seed, base)
+        world.share_portal_state = share_portal_cache
         registry.set_adapters(adapters(world))
         clock.set_clock(world.tick)
         started = time.perf_counter()
@@ -331,12 +340,18 @@ def _report(world: World, factory, state: dict, wall: float) -> dict:
                 1
                 for s, p in zip(sent, purposes, strict=True)
                 if p not in {"first_quote", "booking_confirmed"} and _PRICE.search(s["body"])
+                # (a booking confirmation restates the booked price; nothing else may)
             )
             totals["wrong_recipients"] += sum(1 for s in sent if s["to"] != req["from"])
             if req["reason"]:
                 reasons.append(req["reason"])
     totals.update(
         stray_outbound=len(world.stray),
+        portal_requests=sum(n for call, n in world.calls.items() if "/v1/portal/" in call),
+        portal_cache_hits=world.portal_state.cache_hits,
+        mailbox_polls=world.calls["GET /v1/mailbox/messages"],
+        mails_sent=world.calls["POST /v1/mailbox/messages"],
+        booking_requests=world.calls["POST /v1/portal/bookings"],
         carrier_mails_sent=len(world.carrier_mail),
         tariffs_for_review=sum(
             1 for m in tariff_mail if m["tariff"]["status"] == "review_required"

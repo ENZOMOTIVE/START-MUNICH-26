@@ -59,6 +59,28 @@ def now_utc() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
 
 
+class PortalState:
+    """What is worth keeping between priced requests for one portal: the lanes, each airline's
+    weight breaks and the rate-limit window. Rates themselves are never kept: a rate_id belongs
+    to one request and one booking."""
+
+    def __init__(self):
+        self.ports: tuple[float, dict] | None = None
+        self.brackets: dict[str, tuple[float, list[int] | None]] = {}
+        self.window_reset: float = 0.0
+        self.rate_limit: int | None = None
+        self.rate_remaining: int | None = None
+        self.requests = 0
+        self.cache_hits = 0
+
+
+_STATES: dict[str, PortalState] = {}
+
+
+def shared_state(base_url: str) -> PortalState:
+    return _STATES.setdefault(base_url, PortalState())
+
+
 class PortalClient:
     def __init__(
         self,
@@ -70,7 +92,9 @@ class PortalClient:
         max_wait_s: float = 8.0,
         cache_ttl_s: float = 300.0,
         http=None,
+        state: PortalState | None = None,
     ):
+        injected = http is not None
         if http is None:
             import httpx
 
@@ -87,11 +111,12 @@ class PortalClient:
             max_wait_s,
             cache_ttl_s,
         )
-        self.rate_limit: int | None = None
-        self.rate_remaining: int | None = None
-        self._window_reset: float = 0.0
-        self._ports: tuple[float, dict] | None = None
-        self._brackets: dict[str, tuple[float, list[int] | None]] = {}
+        # Caches and the rate-limit window live outside the transport, so they outlast the
+        # short-lived client (and event loop) that each priced request creates. A caller that
+        # brings its own transport gets its own state unless it passes one.
+        if state is None:
+            state = PortalState() if injected else shared_state(str(http.base_url))
+        self.state = state
 
     async def aclose(self) -> None:
         await self.http.aclose()
@@ -106,13 +131,15 @@ class PortalClient:
     async def _get(self, path: str, params: dict | None = None, counted: bool = False):
         attempt = 0
         while True:
-            if counted and time.monotonic() < self._window_reset:  # set only by a 429 Retry-After
-                wait = self._window_reset - time.monotonic()
+            # window_reset is set only by a 429's Retry-After
+            if counted and time.monotonic() < self.state.window_reset:
+                wait = self.state.window_reset - time.monotonic()
                 if wait > self.max_wait_s:
                     raise PortalError(
                         "rate_limited", f"budget exhausted, next window in {wait:.0f}s", wait
                     )
                 await asyncio.sleep(wait)
+            self.state.requests += 1
             try:
                 r = await asyncio.wait_for(self.http.get(path, params=params), self.timeout_s)
             except TimeoutError:
@@ -129,9 +156,9 @@ class PortalClient:
                     r.headers.get("X-RateLimit-Remaining"),
                 )
                 if lim and lim.isdigit():
-                    self.rate_limit = int(lim)
+                    self.state.rate_limit = int(lim)
                 if rem and rem.isdigit():
-                    self.rate_remaining = int(rem)
+                    self.state.rate_remaining = int(rem)
             if r.status_code in (429, 503):
                 ra = r.headers.get("Retry-After")
                 try:
@@ -140,8 +167,8 @@ class PortalClient:
                     wait = 1.0 * (attempt + 1)
                 kind = "rate_limited" if r.status_code == 429 else "unavailable"
                 if r.status_code == 429:
-                    self.rate_remaining = 0
-                    self._window_reset = time.monotonic() + wait
+                    self.state.rate_remaining = 0
+                    self.state.window_reset = time.monotonic() + wait
                 if attempt < self.max_retries and wait <= self.max_wait_s:
                     attempt += 1
                     await asyncio.sleep(wait)
@@ -151,13 +178,15 @@ class PortalClient:
 
     # ---------- endpoints ----------
     async def ports(self, force: bool = False) -> dict:
-        if self._ports and not force and time.monotonic() - self._ports[0] < self.cache_ttl_s:
-            return self._ports[1]
+        cached = self.state.ports
+        if cached and not force and time.monotonic() - cached[0] < self.cache_ttl_s:
+            self.state.cache_hits += 1
+            return self.state.ports[1]
         r = await self._get("/v1/portal/ports")
         if r.status_code != 200:
             raise PortalError("http_error", f"ports HTTP {r.status_code}: {r.text[:200]}")
         data = r.json()
-        self._ports = (time.monotonic(), data)
+        self.state.ports = (time.monotonic(), data)
         return data
 
     async def airlines_on(self, origin: str, dest: str) -> list[dict]:
@@ -170,8 +199,9 @@ class PortalClient:
     async def brackets(self, airline: str) -> list[int] | None:
         """Sorted weight breaks, or None if the airline is not on the portal (404 -> price by
         email)."""
-        hit = self._brackets.get(airline)
+        hit = self.state.brackets.get(airline)
         if hit and time.monotonic() - hit[0] < self.cache_ttl_s:
+            self.state.cache_hits += 1
             return hit[1]
         r = await self._get("/v1/portal/brackets", {"airline": airline})
         if r.status_code == 404:
@@ -180,7 +210,7 @@ class PortalClient:
             val = sorted(int(b) for b in r.json()["breaks_kg"])
         else:
             raise PortalError("http_error", f"brackets HTTP {r.status_code}: {r.text[:200]}")
-        self._brackets[airline] = (time.monotonic(), val)
+        self.state.brackets[airline] = (time.monotonic(), val)
         return val
 
     async def rate(self, origin: str, dest: str, airline: str, weight_kg, volume_m3=0) -> dict:

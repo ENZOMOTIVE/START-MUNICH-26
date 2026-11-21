@@ -49,7 +49,11 @@ def _interrupted(intent: ActionIntentRow) -> bool:
     return not started or clock.now() - datetime.fromisoformat(started) >= SEND_LEASE
 
 
-def deliver_intent(db: Session, intent: ActionIntentRow, mailbox) -> ActionIntentRow:
+def deliver_intent(
+    db: Session, intent: ActionIntentRow, mailbox, *, operator: bool = False
+) -> ActionIntentRow:
+    """`operator=True` is a person sending from a paused (taken-over) session. It goes through
+    the same `sending` claim, so the agent and a person can never both send one action."""
     session = repositories.session_by_rfq(db, intent.rfq_id)
     if intent.delivery_status == "sending":
         if not _interrupted(intent):
@@ -61,8 +65,11 @@ def deliver_intent(db: Session, intent: ActionIntentRow, mailbox) -> ActionInten
         return intent
     if session is not None:
         # Read the committed flag: an operator's pause must beat a stale copy in this session.
-        if db.scalar(select(SessionRow.paused).where(SessionRow.id == session.id)):
+        paused = db.scalar(select(SessionRow.paused).where(SessionRow.id == session.id))
+        if paused and not operator:
             raise DomainError("session_paused")
+        if operator and not paused:
+            raise DomainError("take_over_first", "pause the session before sending by hand")
     rfq = db.get(RfqRow, intent.rfq_id)
     if intent.kind == "first_quote" and rfq is not None:
         expires = rfq.expires_at if rfq.expires_at.tzinfo else rfq.expires_at.replace(tzinfo=UTC)

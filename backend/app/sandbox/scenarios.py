@@ -596,6 +596,58 @@ _ALL = [
         title="Door pickup: three truckers are asked, the first usable bid is added once",
     ),
     scenario(
+        "pickup_zone_missing",
+        [
+            rfq(
+                body="Please quote 300 kg, 1.2 cbm from FRA to ORD, with pickup at our warehouse.",
+                customer={"answers": {"pickup": {"body": "Please collect from zone 60."}}},
+            )
+        ],
+        {
+            # Never priced without the pickup: asked first, then 585.00 + trucker 85.00.
+            "rfq1": {
+                **BOOKED,
+                "quote.total": "670.00",
+                "customer.questions": [["pickup"]],
+                "outbound": ["missing_info", "first_quote", "booking_confirmed"],
+            }
+        },
+        truckers={
+            "taunusfracht@hackloop.mail": {},
+            "isarwelle-spedition@hackloop.mail": {"price": "85.00", "delay": 15},
+            "domblick-kurierdienst@hackloop.mail": {},
+        },
+        title="Pickup wanted but no place given: ask, never quote without the pickup leg",
+    ),
+    scenario(
+        "tariff_revision",
+        [
+            {
+                "key": "tariff",
+                "from": "elbflug-air-freight@hackloop.mail",
+                "subject": "Tariff December 2026",
+                "body": "Please find our new tariff attached.",
+                "attachments": [
+                    {"id": 1, "filename": "elbflug-2026-12.xlsx", "size": 2048, "content": "new"}
+                ],
+            },
+            rfq(body=DFW_BODY, subject="Quote FRA-DFW", customer=DFW_CUSTOMER, at=5),
+        ],
+        {
+            # Elbflug's old tariff (621.00) is on hold, so the offer is Yellowtail's, worked by
+            # hand from its tariff: 300 x 2.20 = 660.00, fuel 300 x 0.85 = 255.00,
+            # security 300 x 0.25 = 75.00, total 990.00.
+            "rfq1": {
+                **BOOKED,
+                "quote.carrier": "Yellowtail Air Freight",
+                "quote.total": "990.00",
+            },
+            "_totals": {"tariffs_for_review": 1},
+        },
+        airlines={"yellowtail-air-freight@hackloop.mail": {"delay": 30}},
+        title="A revised tariff puts the carrier's old prices on hold until it is reviewed",
+    ),
+    scenario(
         "pickup_no_reply",
         [rfq(body=PICKUP_BODY)],
         {

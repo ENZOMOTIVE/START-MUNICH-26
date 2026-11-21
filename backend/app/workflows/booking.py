@@ -7,6 +7,8 @@ is the retry the booking contract defines. Emails never get that treatment.
 """
 
 import logging
+import re
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -26,11 +28,25 @@ from app.db.models import (
 from app.platform import get_adapters
 from app.platform.booking import BookingRejected, BookingUnknown
 from app.platform.carriers import load_carriers
+from app.platform.decisions import reply_text
 from app.workflows import replies
 from app.workflows import rfq as rfq_flow
+from app.workflows.extract import airports
 
 log = logging.getLogger(__name__)
 OPEN = ("pending", "submitted", "UNKNOWN")
+ACCEPTANCE_HELD = "acceptance_needs_review"
+_MONEY = re.compile(
+    r"(EUR|USD|€|\$)\s?(\d[\d,]*(?:\.\d{1,2})?)|(\d[\d,]*(?:\.\d{1,2})?)\s?(EUR|USD|€)",
+    re.IGNORECASE,
+)
+_CODE = re.compile(r"\b[A-Z]{3}\b")
+_ROUTE_WORD = re.compile(r"\b(?:to|from|via|destination|origin)\s+(?:is\s+)?([A-Z]{3})\b")
+_CONDITION = re.compile(
+    r"\b(?:if|unless|provided|only\s+(?:after|when|if)|but|however|instead|except|"
+    r"as long as|subject to|chang\w+|condition\w*|before you book)\b",
+    re.IGNORECASE,
+)
 
 
 def handle_acceptance(db: Session, message: MessageRow) -> SessionRow | None:
@@ -51,6 +67,17 @@ def handle_acceptance(db: Session, message: MessageRow) -> SessionRow | None:
         candidate = db.get(RateCandidateRow, quote.candidate_id)
         if candidate is None:
             raise DomainError("quoted_candidate_required")
+        problem = acceptance_problem(
+            reply_text(message.body) or message.subject,
+            quote.total,
+            quote.currency,
+            rfq.origin,
+            rfq.destination,
+        )
+        if problem:
+            return _hold_acceptance(db, session, rfq, message, candidate.carrier, problem)
+        if (session.exception or "").startswith(ACCEPTANCE_HELD):
+            session.exception = None
 
     if session.stage not in {"accepted", "booked"} and existing_booking is None:
         session.stage = "accepted"
@@ -66,6 +93,51 @@ def handle_acceptance(db: Session, message: MessageRow) -> SessionRow | None:
             },
         )
     confirm_booking(db, session)
+    return session
+
+
+def acceptance_problem(text, total, currency: str, origin: str, destination: str) -> str | None:
+    """Why this reply does not accept the quote exactly as sent, or None when it does.
+
+    Checked whatever the router decided, so no classifier can turn a counter-offer, a changed
+    route or a condition into a booking.
+    """
+    for match in _MONEY.finditer(text):
+        symbol = (match.group(1) or match.group(4) or "").upper()
+        amount = Decimal((match.group(2) or match.group(3)).replace(",", ""))
+        named = {"€": "EUR", "$": "USD"}.get(symbol, symbol)
+        if amount != Decimal(total) or named != currency:
+            return "amount_differs_from_quote"
+    _, known = airports()
+    codes = set(_ROUTE_WORD.findall(text)) | {c for c in _CODE.findall(text) if c in known}
+    if codes - {origin, destination}:
+        return "route_differs_from_quote"
+    if _CONDITION.search(text):
+        return "conditional_or_deferred"
+    return None
+
+
+def _hold_acceptance(db, session, rfq: RfqRow, message: MessageRow, carrier: str, problem: str):
+    """Not an acceptance of the quote as sent: keep it for a person and ask the customer."""
+    session.exception = f"{ACCEPTANCE_HELD}:{problem}"
+    if not rfq_flow.has_event(db, session.id, "acceptance_held", message.external_id):
+        repositories.append_event(
+            db,
+            session.id,
+            "acceptance_held",
+            {"external_id": message.external_id, "reason": problem, "simulated": True},
+            occurred_at=message.received_at,
+        )
+    root = db.get(MessageRow, rfq.message_id)
+    mail = replies.acceptance_clarification(
+        rfq_flow.customer_name(root), root.subject, carrier, problem
+    )
+    key = f"clarify:{rfq.id}:acceptance:{message.external_id}"[:128]
+    intent, _ = rfq_flow.outbound(db, rfq, key, "reply", message, mail, "quoted")
+    try:
+        rfq_flow.send(db, intent)
+    except DomainError as exc:
+        log.warning("acceptance clarification not sent: %s", exc.code)
     return session
 
 
@@ -268,7 +340,8 @@ def _notify(db, session, rfq: RfqRow, booking: BookingRow, candidate) -> None:
 def retry_open_bookings(db: Session) -> int:
     """Re-send the identical booking request for every booking whose outcome is not known."""
     rows = db.scalars(
-        select(BookingRow).where(BookingRow.status.in_(("submitted", "UNKNOWN")))
+        # `pending` is a booking that was held back by a pause; it goes out after the resume.
+        select(BookingRow).where(BookingRow.status.in_(("pending", "submitted", "UNKNOWN")))
     ).all()
     for booking in rows:
         session = repositories.session_by_rfq(db, booking.rfq_id)

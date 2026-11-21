@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -16,6 +17,7 @@ from app.db.models import MessageRow
 log = logging.getLogger(__name__)
 
 CURSOR_NAME = "mailbox"
+POLLER_LOCK = 5_150_001  # arbitrary application-wide advisory lock id
 POLL_LIMIT = 100
 HTTP_TIMEOUT_SECONDS = 5.0
 DEFAULT_RATE_LIMIT_WAIT_SECONDS = 10.0
@@ -197,6 +199,10 @@ def poll_page(response: dict[str, Any] | list[Any]) -> tuple[list[dict[str, Any]
 
 
 def poll_mailbox_once(db: Session, mailbox, limit: int = POLL_LIMIT) -> int:
+    # One poller per team: a second worker that polls at the same time skips this round. The
+    # lock lives as long as this transaction, which also stores the mail and moves the cursor.
+    if not db.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": POLLER_LOCK}):
+        return 0
     since_id = repositories.get_cursor(db, CURSOR_NAME)
     items, next_since_id = poll_page(mailbox.poll(since_id, limit))
     for item in items:

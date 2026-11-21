@@ -28,11 +28,22 @@ export function SessionsPage() {
   }, []);
 
   useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => {
-      void refresh();
-    }, 2000);
-    return () => window.clearInterval(timer);
+    // The next refresh starts only after the last one finished, and not while the tab is hidden.
+    let stopped = false;
+    let timer = 0;
+    const tick = async () => {
+      if (!document.hidden) {
+        await refresh();
+      }
+      if (!stopped) {
+        timer = window.setTimeout(tick, 2000);
+      }
+    };
+    void tick();
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
   }, [refresh]);
 
   const onRunDemo = async () => {

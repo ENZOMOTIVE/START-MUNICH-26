@@ -34,7 +34,7 @@ def _payload(**overrides) -> dict:
             "rfq": {
                 "origin": "FRA",
                 "destination": "LAX",
-                "weight_kg": "500",
+                "weight_kg": "250",  # the demo rate fixture is hand-checked for 250 kg only
                 "volume_m3": "2.5",
                 "pickup_required": False,
                 "pickup_zone": None,

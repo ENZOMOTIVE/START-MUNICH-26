@@ -12,6 +12,7 @@ _ASK = {
     "origin": "the departure airport",
     "destination": "the destination airport",
     "weight_kg": "the gross weight in kg",
+    "pickup_zone": "the postcode or zone we should collect from",
 }
 _DOC = {
     "dgd": "the Shipper's Declaration for Dangerous Goods (DGD)",
@@ -155,6 +156,27 @@ def booking_failed(name, subject, carrier, reason: str) -> dict:
         f"I am sorry, I could not complete the booking with {carrier}: {reason}.",
         "Nothing has been booked. If you still want to ship, reply to this email and I will "
         "send you an updated offer.",
+    )
+
+
+_NOT_AS_QUOTED = {
+    "amount_differs_from_quote": "it names a different price from the one I quoted",
+    "route_differs_from_quote": "it names a different route from the one I quoted",
+    "conditional_or_deferred": "it adds a condition or asks me to wait",
+}
+
+
+def acceptance_clarification(name, subject, carrier, problem: str) -> dict:
+    """No price is repeated here: the only priced message in a thread is the quote itself."""
+    return _mail(
+        "acceptance_clarification",
+        subject,
+        name,
+        f"Thank you for your reply. I have not booked anything yet, because "
+        f"{_NOT_AS_QUOTED[problem]}.",
+        f"If you accept the offer with {carrier} exactly as quoted, please reply "
+        '"We accept the quote" and I will book it. If you need a change, tell me what you '
+        "need and I will send a revised offer.",
     )
 
 

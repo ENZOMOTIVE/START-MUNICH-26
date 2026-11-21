@@ -148,6 +148,30 @@ scenario (`backend/app/sandbox/scenarios.py`) or a test under `backend/tests/`.
 | T5 | Report with real outcomes | `sandbox/runner.py` | `reports/sandbox-report.md` | PASS | |
 | T5 | Deployment and live smoke test | | | NOT IMPLEMENTED | not authorised |
 
+## Review findings on commit 3fdda69
+
+Each finding was checked against this branch before anything was changed. Evidence is a test in
+`backend/tests/sandbox/` or a scenario; none of it is live.
+
+| Finding | State on this branch | Evidence |
+| --- | --- | --- |
+| Live mail is under `raw.mail`, extraction read `raw.rfq` | fixed | `happy_path`, extraction tests |
+| Quote delivery used the fake mailbox; live send not implemented | fixed | adapters chosen by mode; `LiveMailbox.send` runs against the mock transport in every scenario |
+| Booking made local `BK-SIM` references and called them confirmed | fixed outside demo mode | `booking_retry`, `email_booking_silent`; demo mode still simulates and says so |
+| Only RFQ and acceptance had handlers | fixed for follow-up, tracking, carrier bid, tariff, booking confirmation | scenarios; rate-desk mail has no documented meaning and goes to `GET /api/review` |
+| Changed price, route or a condition could pass as acceptance | fixed | `test_only_an_acceptance_of_the_quote_as_sent_passes`, `test_a_changed_or_conditional_reply_never_books` |
+| Lost send acknowledgement could cause a duplicate | fixed | `lost_ack`, `crash_recovery` |
+| One worker cycle could use all five attempts | fixed | `test_a_failed_job_is_not_retried_in_the_same_cycle` |
+| Required pickup vanished when its zone was missing | fixed | `pickup_zone_missing` |
+| Portal cache and quota state rebuilt per request | fixed within one worker process | `test_portal_lanes_and_breaks_are_fetched_once_for_many_requests` |
+| One malformed portal answer discarded healthy ones | fixed | `portal_faults` |
+| Human reply controls and DG clarification incomplete | fixed | `test_operator_edits_and_sends_a_draft_through_the_outbox`, `dg_*` scenarios |
+| `make test` used the application database | fixed | `tests/conftest.py` refuses any database that is not a sandbox or test one |
+| Demo fixture gave one price for any weight | fixed | `test_a_fixed_fixture_price_is_not_offered_for_another_weight` |
+
+Still open: portal quota is shared inside one worker process only, not across several; identical
+concurrent portal requests are not combined; the model gateway cost is counted as `unknown`.
+
 ## Not verified
 
 - Any call to the real 5U API: mailbox send, bookings, rate portal, gateway.

@@ -13,6 +13,7 @@ import heapq
 import json
 import random
 import re
+from collections import Counter
 from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -21,7 +22,7 @@ import httpx
 from app.platform.booking import PortalBooking
 from app.platform.gateway import GatewayError, _record_usage
 from app.platform.mailbox import LiveMailbox
-from app.pricing.portal_client import PortalClient
+from app.pricing.portal_client import PortalClient, PortalState
 
 BASE_URL = "https://sandbox.invalid"
 TEAM = "free-candy@hackloop.mail"
@@ -32,6 +33,7 @@ _PRICE = re.compile(r"\b(EUR|USD)\s?(\d[\d,]*\.\d{2})\b")
 _TOPICS = {
     "weight": ("weight",),
     "route": ("airport",),
+    "pickup": ("postcode",),
     "dg_docs": ("declaration", "safety data sheet"),
     "dg_status": ("confirm which",),
 }
@@ -62,6 +64,9 @@ class World:
         self.specs: dict[int, dict] = {}  # mailbox id -> the scenario mail it came from
         self.polls_with_mail = 0
         self.max_page = 0
+        self.calls: Counter = Counter()  # requests the application made, by "METHOD path"
+        self.portal_state = PortalState()  # one cache for the whole run, like one live worker
+        self.share_portal_state = True
         self.faults = {k: list(v) for k, v in scenario.get("faults", {}).items()}
         self.fault_log: list[dict] = []
         self.model_calls: list[dict] = []
@@ -260,6 +265,8 @@ class World:
             "update for booking" in lower or "tracking update" in lower or "not confirmed" in lower
         ):
             request["tracking_answers"].append(text)
+        elif "have not booked anything yet" in lower:
+            request["questions"].append(["acceptance_as_quoted"])  # the customer does not reply
         elif prices:
             request["priced"].append({"at_s": item["at_s"], "amount": prices[0][1]})
             if len(request["priced"]) > 1:
@@ -432,6 +439,7 @@ class World:
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         route = (request.method, request.url.path)
+        self.calls[f"{route[0]} {re.sub(r'/[0-9]+', '/{id}', route[1])}"] += 1
         if route == ("GET", "/v1/mailbox/messages"):
             return self._poll(request)
         if route == ("POST", "/v1/mailbox/messages"):
@@ -492,12 +500,14 @@ def adapters(world: World) -> dict:
 
     def rates() -> PortalClient:
         http = httpx.AsyncClient(base_url=BASE_URL, transport=httpx.MockTransport(world.handle))
-        return PortalClient(http=http, max_retries=1)
+        state = world.portal_state if world.share_portal_state else None
+        return PortalClient(http=http, max_retries=1, state=state)
 
     return {
         "mailbox": SandboxMailbox(world),
         "gateway": gateway,
         "booking": SandboxBooking(world),
         "rates": rates,
+        "mail_scope": lambda: [str(m["id"]) for m in world.inbox],
         "extraction_model": {"gateway": gateway, "name": MODEL},
     }

@@ -128,6 +128,13 @@ def route_message(db: Session, message_id: UUID | str, judge: ReplyJudge | None 
 
     handler = _handler(kind)
     result = handler(db, message) if handler is not None else None
+    if handler is None and not raw.get("unmatched"):
+        # Never "done" by default: mail no agent handles is kept visible for a person.
+        raw = dict(message.raw) if isinstance(message.raw, dict) else {}
+        raw["unmatched"] = {"kind": kind, "reason": "no agent handles this kind of mail"}
+        message.raw = raw
+        flag_modified(message, "raw")
+        db.flush()
     if result is None and decision is not None:
         # No agent acted on this mail: keep it visible on the thread's timeline.
         _note_on_timeline(db, message, decision)

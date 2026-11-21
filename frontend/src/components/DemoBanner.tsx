@@ -20,14 +20,10 @@ export function DemoBanner() {
       }
     };
 
-    void load();
-    const timer = window.setInterval(() => {
-      void load();
-    }, 2000);
+    void load(); // the mode cannot change while the page is open: ask once
 
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
     };
   }, []);
 

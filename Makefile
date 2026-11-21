@@ -1,5 +1,7 @@
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 COMPOSE := docker compose -f "$(ROOT)/compose.yaml" --project-directory "$(ROOT)"
+SANDBOX := docker compose -f "$(ROOT)/compose.sandbox.yaml" --project-directory "$(ROOT)"
+SANDBOX_DB := postgresql+psycopg://fiveu_sandbox:fiveu_sandbox@127.0.0.1:5434/fiveu_sandbox
 
 .PHONY: setup dev migrate demo test lint typecheck quality-data logs down openapi
 
@@ -21,15 +23,12 @@ migrate:
 demo:
 	curl -sf -X POST http://127.0.0.1:8000/internal/demo/run
 
+# Tests commit rows, so they run on the sandbox database only (127.0.0.1:5434), never on the
+# application database. tests/conftest.py refuses any database that is not a sandbox or test one.
 test:
-	$(COMPOSE) up -d postgres
-	@i=0; \
-	until $(COMPOSE) exec -T postgres pg_isready -U fiveu -d fiveu; do \
-	  i=$$((i+1)); \
-	  if [ $$i -gt 30 ]; then echo "postgres did not become ready"; exit 1; fi; \
-	  sleep 1; \
-	done
-	cd "$(ROOT)/backend" && DATABASE_URL=postgresql+psycopg://fiveu:fiveu@127.0.0.1:5433/fiveu APP_MODE=demo LIVE_ACTIONS_ENABLED=false uv run pytest -q
+	$(SANDBOX) up -d --wait postgres
+	cd "$(ROOT)/backend" && DATABASE_URL=$(SANDBOX_DB) APP_MODE=demo LIVE_ACTIONS_ENABLED=false \
+		uv run --group parsers pytest -q
 
 lint:
 	cd "$(ROOT)/backend" && uv run ruff check .

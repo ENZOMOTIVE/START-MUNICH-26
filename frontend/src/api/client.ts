@@ -55,6 +55,40 @@ export function resumeSession(id: string): Promise<SessionDetail> {
   return request(`/api/sessions/${id}/resume`, { method: "POST" });
 }
 
+export type SessionAction = {
+  id: string;
+  kind: string;
+  purpose: string | null;
+  delivery_status: string;
+  to: string | null;
+  subject: string | null;
+  body: string | null;
+  edited_by_operator: boolean;
+  simulated: boolean;
+};
+
+export function listActions(id: string): Promise<SessionAction[]> {
+  return request(`/api/sessions/${id}/actions`);
+}
+
+export function editAction(id: string, actionId: string, body: string): Promise<SessionAction> {
+  return request(`/api/sessions/${id}/actions/${actionId}`, {
+    method: "PUT",
+    body: JSON.stringify({ body }),
+  });
+}
+
+export function sendAction(id: string, actionId: string): Promise<SessionAction> {
+  return request(`/api/sessions/${id}/actions/${actionId}/send`, { method: "POST" });
+}
+
+export function resolveAction(id: string, actionId: string, sent: boolean): Promise<SessionAction> {
+  return request(`/api/sessions/${id}/actions/${actionId}/resolve`, {
+    method: "POST",
+    body: JSON.stringify({ sent }),
+  });
+}
+
 export type SandboxScenario = { id: string; title: string; version: number };
 export type SandboxMail = {
   direction: "in" | "out";

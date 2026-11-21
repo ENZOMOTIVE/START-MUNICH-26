@@ -135,9 +135,12 @@ def assess(db: Session, root: MessageRow) -> dict:
             if found:
                 fields.update(found)
                 method = "rules+model"
+    missing = [name for name in REQUIRED if name not in fields]
+    if fields.get("pickup_required") and not fields.get("pickup_zone"):
+        missing.append("pickup_zone")  # a pickup with no place cannot be priced; never drop it
     return {
         "fields": fields,
-        "missing": [name for name in REQUIRED if name not in fields],
+        "missing": missing,
         "notes": notes,
         "method": method,
         "sources": [m.external_id for m in mails],
