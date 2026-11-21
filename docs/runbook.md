@@ -27,6 +27,7 @@ make setup
 make dev
 make migrate    # optional; api already runs alembic on start
 make demo       # simulated; no live email
+make quality-data # fixture/source audit; reports issues without changing source tariffs
 make logs
 make down       # docker compose down  — volumes kept
 ```

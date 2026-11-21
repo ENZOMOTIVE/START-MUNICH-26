@@ -15,5 +15,6 @@ frontend/openapi.json
 backend/.venv/
 frontend/.vite/
 *.log
+.mailbox-state/
 .idea/
 .vscode/

@@ -1,7 +1,7 @@
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 COMPOSE := docker compose -f "$(ROOT)/compose.yaml" --project-directory "$(ROOT)"
 
-.PHONY: setup dev migrate demo test lint typecheck logs down openapi
+.PHONY: setup dev migrate demo test lint typecheck quality-data logs down openapi
 
 setup:
 	if [ ! -f "$(ROOT)/.env" ]; then cp "$(ROOT)/.env.example" "$(ROOT)/.env"; else echo "$(ROOT)/.env exists"; fi
@@ -38,6 +38,11 @@ lint:
 typecheck:
 	cd "$(ROOT)/frontend" && pnpm typecheck
 	@echo "Backend typecheck skipped (no extra Python typechecker). Use make lint."
+
+# T5 data gate. It validates fixtures and starter-kit consistency without parsing tariffs.
+# Use --strict only after T2 has resolved any reported source-data discrepancies.
+quality-data:
+	cd "$(ROOT)/backend" && uv run python scripts/check_demo_data.py
 
 logs:
 	$(COMPOSE) logs -f --tail=100
