@@ -51,6 +51,42 @@ export function resumeSession(id: string): Promise<SessionDetail> {
   return request(`/api/sessions/${id}/resume`, { method: "POST" });
 }
 
+export type SandboxScenario = { id: string; title: string; version: number };
+export type SandboxMail = {
+  direction: "in" | "out";
+  at_s: number;
+  subject: string;
+  body: string;
+  purpose?: string;
+  attachments?: string[];
+};
+export type SandboxResult = {
+  scenario: string;
+  title: string;
+  seed: number;
+  passed: boolean;
+  digest: string;
+  simulated_seconds: number;
+  wall_seconds: number;
+  data: string;
+  checks: { check: string; expected: unknown; actual: unknown; passed: boolean }[];
+  requests: Record<string, Record<string, unknown>>;
+  totals: Record<string, number>;
+  threads: Record<string, SandboxMail[]>;
+  faults: { at_s: number; where: string; fault: string }[];
+  errors: Record<string, unknown>[];
+  rejection_reasons: string[];
+};
+
+// These routes exist only when the API runs with APP_MODE=sandbox.
+export function listSandboxScenarios(): Promise<SandboxScenario[]> {
+  return request("/sandbox/scenarios");
+}
+
+export function runSandboxScenario(scenario: string, seed: number): Promise<SandboxResult> {
+  return request("/sandbox/run", { method: "POST", body: JSON.stringify({ scenario, seed }) });
+}
+
 export async function runDemo(): Promise<{ id: string }> {
   const data = await request<DemoRunResult | string>("/internal/demo/run", {
     method: "POST",

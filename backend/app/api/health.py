@@ -30,4 +30,5 @@ def meta():
         "app_mode": settings.app_mode,
         "live_actions_enabled": settings.live_actions_enabled,
         "demo": settings.app_mode == "demo",
+        "sandbox": settings.app_mode == "sandbox",
     }

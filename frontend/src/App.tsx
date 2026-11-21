@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { DemoBanner } from "./components/DemoBanner";
+import { SandboxConsole } from "./features/sandbox/SandboxConsole";
 import { SessionDetail } from "./features/sessions/SessionDetail";
 import { SessionsPage } from "./features/sessions/SessionsPage";
 
@@ -24,6 +25,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<SessionsPage />} />
           <Route path="/sessions/:id" element={<SessionDetail />} />
+          <Route path="/sandbox" element={<SandboxConsole />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

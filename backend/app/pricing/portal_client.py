@@ -196,7 +196,13 @@ class PortalClient:
             raise PortalError("not_on_portal", r.text[:300])
         if r.status_code != 200:
             raise PortalError("http_error", f"rates HTTP {r.status_code}: {r.text[:200]}")
-        data = r.json()
+        try:
+            data = r.json()
+        except ValueError as e:
+            # One airline's unreadable answer must not take down the other sources.
+            raise PortalError("malformed", f"rates: {e}") from e
+        if not isinstance(data, dict):
+            raise PortalError("malformed", f"rates: expected an object, got {type(data).__name__}")
         data["_fetched_at"] = now_utc().isoformat()
         return data
 

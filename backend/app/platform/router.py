@@ -18,6 +18,9 @@ from app.platform.routing import AGENT_FOR_KIND, KINDS, MailFacts, RoutingDecisi
 HANDLERS: dict[str, str] = {
     "rfq": "app.workflows.rfq:handle_rfq",
     "acceptance": "app.workflows.booking:handle_acceptance",
+    "follow_up": "app.workflows.followup:handle_follow_up",
+    "tracking": "app.workflows.followup:handle_tracking_update",
+    "booking_confirmation": "app.workflows.followup:handle_booking_confirmation",
 }
 
 
@@ -122,12 +125,12 @@ def route_message(db: Session, message_id: UUID | str, judge: ReplyJudge | None 
         db.flush()
 
     handler = _handler(kind)
-    if handler is not None:
-        return handler(db, message)
-    if decision is not None:
+    result = handler(db, message) if handler is not None else None
+    if result is None and decision is not None:
+        # No agent acted on this mail: keep it visible on the thread's timeline.
         _note_on_timeline(db, message, decision)
         db.flush()
-    return None
+    return result
 
 
 __all__ = ["AGENT_FOR_KIND", "HANDLERS", "classify", "route_message"]

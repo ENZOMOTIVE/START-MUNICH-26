@@ -1,0 +1,180 @@
+"""Customer emails built only from recorded facts.
+
+Every function takes the facts it may state and returns {"purpose", "subject", "body"}.
+Nothing here looks anything up, so a reply cannot contain a fact the workflow did not record.
+Only `final_quote` may state a price.
+"""
+
+from datetime import datetime
+
+SIGNATURE = "Best regards,\nFiveU Freight Desk"
+_ASK = {
+    "origin": "the departure airport",
+    "destination": "the destination airport",
+    "weight_kg": "the gross weight in kg",
+}
+_DOC = {
+    "dgd": "the Shipper's Declaration for Dangerous Goods (DGD)",
+    "msds": "the safety data sheet (MSDS)",
+}
+
+
+def _join(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _mail(purpose: str, subject: str, name: str | None, *paragraphs: str) -> dict:
+    greeting = f"Hello {name}," if name else "Hello,"
+    subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+    body = "\n\n".join([greeting, *[p for p in paragraphs if p], SIGNATURE])
+    return {"purpose": purpose, "subject": subject, "body": body}
+
+
+def _route(origin: str | None, destination: str | None) -> str:
+    if origin and destination:
+        return f" from {origin} to {destination}"
+    return f" from {origin}" if origin else (f" to {destination}" if destination else "")
+
+
+def _when(value: datetime) -> str:
+    return value.strftime("%d %b %Y %H:%M UTC")
+
+
+def missing_info(name, subject, origin, destination, missing: list[str], notes: list[str]) -> dict:
+    note = f" ({'; '.join(notes)}.)" if notes else ""
+    return _mail(
+        "missing_info",
+        subject,
+        name,
+        f"Thank you for your request{_route(origin, destination)}.",
+        f"To price it I still need {_join([_ASK[m] for m in missing])}.{note}",
+        "As soon as I have that, I will send you the quote.",
+    )
+
+
+def dg_documents(name, subject, origin, destination, signals: list, missing: list) -> dict:
+    return _mail(
+        "dg_documents",
+        subject,
+        name,
+        f"Thank you for your request{_route(origin, destination)}.",
+        f"Your message mentions {_join(signals[:3])}, which ships as dangerous goods. "
+        f"Before I can quote, I need {_join([_DOC[m] for m in missing])}.",
+        "Please reply to this email with the documents attached and I will continue right away.",
+    )
+
+
+def dg_conflict(name, subject, origin, destination, signals: list[str], missing: list[str]) -> dict:
+    return _mail(
+        "dg_conflict",
+        subject,
+        name,
+        f"Thank you for your request{_route(origin, destination)}.",
+        f"Your message describes the cargo as non-dangerous, but it also mentions "
+        f"{_join(signals[:3])}. Could you confirm which is correct?",
+        f"If it is dangerous goods, please attach {_join([_DOC[m] for m in missing])}. "
+        "If it is not, a short confirmation is enough and I will quote straight away.",
+    )
+
+
+def final_quote(
+    name,
+    subject,
+    origin,
+    destination,
+    weight_kg,
+    carrier,
+    total,
+    currency,
+    transit_days,
+    charge_codes: list[str],
+    valid_until: datetime | None,
+    pickup_zone=None,
+) -> dict:
+    included = [c.replace("_", " ") for c in charge_codes]
+    transit = "transit time not confirmed"
+    if transit_days is not None:
+        transit = f"transit {transit_days} days"
+    lines = [f"Total: {currency} {total} all-in", f"Carrier: {carrier}, {transit}"]
+    if included:
+        lines.append(f"Included: {_join(included)}")
+    if pickup_zone:
+        lines.append(f"Pickup: from zone {pickup_zone}")
+    if valid_until is not None:
+        lines.append(f"Valid until: {_when(valid_until)}")
+    return _mail(
+        "first_quote",
+        subject,
+        name,
+        "Thank you for your request. "
+        f"Here is our offer for {weight_kg} kg{_route(origin, destination)}:",
+        "\n".join(lines),
+        "To book, reply to this email and confirm that you accept.",
+    )
+
+
+def no_offer(name, subject, origin, destination, reason: str) -> dict:
+    return _mail(
+        "no_offer",
+        subject,
+        name,
+        f"Thank you for your request{_route(origin, destination)}.",
+        f"I am sorry, I cannot offer a price right now: {reason}. "
+        "I cannot say yet when a rate will be available.",
+        "If anything about the shipment can change, tell me and I will check again.",
+    )
+
+
+def booking_submitted(name, subject, carrier, team_reference) -> dict:
+    return _mail(
+        "booking_submitted",
+        subject,
+        name,
+        f"Thank you for accepting. I have submitted the booking with {carrier} "
+        f"under our reference {team_reference}.",
+        "It is not confirmed yet. I will write again as soon as the carrier confirms it.",
+    )
+
+
+def booking_confirmed(
+    name, subject, carrier, booking_reference, origin, destination, weight_kg, total, currency
+) -> dict:
+    return _mail(
+        "booking_confirmed",
+        subject,
+        name,
+        f"Your booking is confirmed. Booking reference: {booking_reference}.",
+        f"{weight_kg} kg{_route(origin, destination)} with {carrier}, {currency} {total} all-in.",
+        "I will pass on tracking updates as I receive them.",
+    )
+
+
+def tracking_answer(
+    name, subject, booking_reference, booking_status, carrier, update: dict | None
+) -> dict:
+    if booking_status != "confirmed":
+        return _mail(
+            "tracking_answer",
+            subject,
+            name,
+            f"Your booking with {carrier} has been submitted but is not confirmed yet, "
+            "so there is no shipment status to report.",
+            "I will write as soon as the carrier confirms it.",
+        )
+    if update is None:
+        return _mail(
+            "tracking_answer",
+            subject,
+            name,
+            f"Your booking {booking_reference} with {carrier} is confirmed.",
+            "I have not received a tracking update for it yet, so I cannot tell you where the "
+            "shipment is right now. I will pass on updates as soon as they arrive.",
+        )
+    return _mail(
+        "tracking_answer",
+        subject,
+        name,
+        f"The latest confirmed update for booking {booking_reference} is: "
+        f"{update['status']} (reported {_when(update['reported_at'])}).",
+        "I have no later information than that. I will pass on the next update when it arrives.",
+    )

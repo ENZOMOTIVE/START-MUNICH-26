@@ -18,6 +18,7 @@ QtyStr = Annotated[
 
 class DeliveryStatus(StrEnum):
     PENDING = "pending"
+    SENDING = "sending"
     CONFIRMED = "confirmed"
     FAILED = "failed"
     UNKNOWN = "UNKNOWN"
@@ -34,6 +35,7 @@ class WorkflowStatus(StrEnum):
 
 class SessionStage(StrEnum):
     INTAKE = "intake"
+    CLARIFYING = "clarifying"
     PRICING = "pricing"
     QUOTED = "quoted"
     ACCEPTED = "accepted"

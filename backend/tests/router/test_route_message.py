@@ -153,11 +153,13 @@ def test_trucker_bid_records_trucker(db):
 
 def test_customer_new_thread_is_rfq_and_dispatched(db):
     message = _ingest(db, raw={"mail": {"id": 2, "references": []}})
-    from app.core.errors import DomainError
+    from app.db import repositories
 
-    with pytest.raises(DomainError) as raised:
-        route_message(db, message.id)
-    assert raised.value.code == "incomplete_rfq"
+    # An RFQ without route or weight is no longer an error: the customer is asked once.
+    session = route_message(db, message.id)
+    assert session.stage == "clarifying"
+    assert session.exception == "waiting_for_customer:missing_info"
+    assert repositories.quote_for(db, session.rfq_id) is None
     assert message.classification == "rfq"
     assert _routing(message)["rule"] == "customer_new_thread"
 

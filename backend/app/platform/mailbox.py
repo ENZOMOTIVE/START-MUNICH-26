@@ -78,12 +78,33 @@ class LiveMailbox:
         return self._get(path).content
 
     def send(self, payload: dict[str, Any]) -> dict[str, Any]:
-        if not get_settings().live_allowed():
-            raise LiveActionsDisabled()
-        raise NotImplementedError(
-            "TODO: implement POST https://api.start-hack.5u.ai/v1/mailbox/messages "
-            "after re-reading official OpenAPI. Do not invent endpoints."
-        )
+        """POST /v1/mailbox/messages with the documented HackathonMessageIn fields only.
+
+        MailboxError.kind tells the outbox what is known: `not_sent` and `rejected` are
+        definite, `unknown` means the mail may have gone out.
+        """
+        body = {
+            key: payload[key]
+            for key in ("to", "subject", "body", "in_reply_to", "attachments")
+            if payload.get(key) is not None
+        }
+        client = self._http()
+        try:
+            response = client.post("/v1/mailbox/messages", json=body)
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            raise MailboxError("not_sent", str(exc)) from exc
+        except httpx.TransportError as exc:
+            raise MailboxError("unknown", f"{type(exc).__name__}: {exc}") from exc
+        if response.status_code == 429:
+            raise MailboxError("not_sent", "HTTP 429")
+        if response.status_code >= 500:
+            raise MailboxError("unknown", f"HTTP {response.status_code}")
+        if response.status_code >= 400:
+            raise MailboxError("rejected", f"HTTP {response.status_code}: {response.text[:200]}")
+        try:
+            return response.json()
+        except ValueError:
+            return {}
 
 
 def ingest_message(db: Session, payload: dict[str, Any]) -> tuple[MessageRow, bool]:

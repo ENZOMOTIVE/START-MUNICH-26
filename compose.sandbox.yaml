@@ -1,0 +1,84 @@
+# Sandbox stack: own project name, own database, own volume, own ports. Start with
+# `make sandbox-up`. It never reads `.env`; all values below are synthetic.
+#
+# Egress: the application refuses live URLs at start-up and installs a socket guard in the API
+# and the worker. On top of that the worker and the database sit on an internal Docker network
+# with no route out. The API needs a published port, so it is also on `edge`; for the API the
+# in-process guard is the egress control.
+name: fiveu-sandbox
+
+x-sandbox-env: &sandbox-env
+  APP_MODE: sandbox
+  LIVE_ACTIONS_ENABLED: "false"
+  LLM_MODE: fake
+  SIMULATION_SEED: "42"
+  ROUTER_BACKEND: keyword
+  DATABASE_URL: postgresql+psycopg://fiveu_sandbox:fiveu_sandbox@postgres:5432/fiveu_sandbox
+  HACKATHON_API_BASE: https://sandbox.invalid
+  HACKATHON_GATEWAY_BASE: https://sandbox.invalid/v1/gateway
+  HACKATHON_API_KEY: sandbox-not-a-real-key
+  GATEWAY_OPENAI_KEY: ""
+  FRONTEND_ORIGIN: http://127.0.0.1:5174
+  FIXTURES_DIR: /fixtures
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fiveu_sandbox
+      POSTGRES_PASSWORD: fiveu_sandbox
+      POSTGRES_DB: fiveu_sandbox
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - fiveu_sandbox_pgdata:/var/lib/postgresql/data
+    networks: [internal, edge]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fiveu_sandbox -d fiveu_sandbox"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment: *sandbox-env
+    ports:
+      - "127.0.0.1:8100:8000"
+    volumes:
+      - ./fixtures:/fixtures:ro
+    networks: [internal, edge]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    build:
+      context: ./backend
+    command: ["python", "-m", "app.workers.main"]
+    environment: *sandbox-env
+    volumes:
+      - ./fixtures:/fixtures:ro
+    networks: [internal]
+    depends_on:
+      api:
+        condition: service_healthy
+
+networks:
+  internal:
+    internal: true
+  edge: {}
+
+volumes:
+  fiveu_sandbox_pgdata:

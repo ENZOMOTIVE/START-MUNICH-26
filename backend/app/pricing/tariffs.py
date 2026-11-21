@@ -10,8 +10,11 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from app.contracts.models import RateCandidate
+from app.core import clock
+from app.core.config import get_settings
 from app.db.models import RateCandidateRow, RfqRow
 from app.db.repositories import candidates_for
+from app.platform import get_adapters
 
 from .candidates import build_rate_candidates
 
@@ -30,7 +33,8 @@ def candidate_row(c: RateCandidate) -> RateCandidateRow:
         source_ref=c.source_ref,
         source_version=c.source_version,
         charges=[ch.model_dump(mode="json") for ch in c.charges],
-        simulated=c.simulated,
+        # Outside live mode every rate comes from a fixture or the simulator: label it so.
+        simulated=c.simulated or not get_settings().live_allowed(),
     )
 
 
@@ -38,7 +42,10 @@ def load_fixture_candidates(db: Session, rfq: RfqRow) -> list[RateCandidateRow]:
     existing = candidates_for(db, rfq.id)
     if existing:
         return existing
-    rows = [candidate_row(c) for c in build_rate_candidates(rfq)]
+    priced = build_rate_candidates(
+        rfq, portal_factory=get_adapters().get("rates"), now=clock.now()
+    )
+    rows = [candidate_row(c) for c in priced]
     for row in rows:
         db.add(row)
     db.flush()
