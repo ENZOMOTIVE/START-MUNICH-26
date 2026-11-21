@@ -1,0 +1,9 @@
+# secrets
+.env
+.env.*
+!.env.example
+# local runtime state
+var/
+__pycache__/
+*.pyc
+.pytest_cache/
