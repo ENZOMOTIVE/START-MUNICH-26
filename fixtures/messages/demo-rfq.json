@@ -1,0 +1,18 @@
+{
+  "external_id": "demo-rfq",
+  "thread_id": "demo-thread",
+  "sender": "shipper@example.com",
+  "recipient": "desk@example.com",
+  "subject": "RFQ FRA-LAX",
+  "body": "Please quote RFQ FRA to LAX 500kg",
+  "classification": "rfq",
+  "rfq": {
+    "origin": "FRA",
+    "destination": "LAX",
+    "weight_kg": "500",
+    "volume_m3": "2.5",
+    "pickup_required": false,
+    "pickup_zone": null,
+    "service_intent": "cheapest"
+  }
+}

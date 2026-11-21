@@ -1,0 +1,5 @@
+{
+  "name": "demo-happy-path",
+  "steps": ["rfq", "quote", "acceptance", "booking"],
+  "simulated": true
+}

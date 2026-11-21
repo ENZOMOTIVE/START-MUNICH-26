@@ -1,0 +1,8 @@
+{
+  "external_id": "demo-acceptance",
+  "sender": "shipper@example.com",
+  "recipient": "desk@example.com",
+  "subject": "Re: RFQ FRA-LAX",
+  "body": "we accept the quote",
+  "classification": "acceptance"
+}

@@ -4,6 +4,22 @@
 !.env.example
 # local runtime state
 var/
+.venv
+backend/.venv/
 __pycache__/
+*.py[cod]
 *.pyc
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+node_modules/
+dist/
+frontend/openapi.json
+frontend/.vite/
+*.egg-info/
+*.log
+.DS_Store
+.idea/
+.vscode/
