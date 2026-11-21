@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     worker_id: str = Field(default="worker-1")
     job_poll_seconds: float = 0.5
     fixtures_dir: str = ""
+    mailbox_poll_seconds: float = 1.5
+    router_backend: Literal["keyword", "gateway"] = "keyword"
+    router_model: str = "gpt-4.1-mini"
 
     def live_allowed(self) -> bool:
         return self.app_mode == "live" and self.live_actions_enabled

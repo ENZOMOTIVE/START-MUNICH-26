@@ -83,3 +83,56 @@ make openapi
 ```
 
 Runs `uv run python scripts/export_openapi.py > ../frontend/openapi.json` from `backend/`, then `pnpm openapi` in `frontend/`. Paths are quoted in the Makefile because the repo path contains spaces.
+
+## Mail routing (T1)
+
+Every inbound mail gets one kind in `messages.classification` and one owning agent. Code in `backend/app/platform/routing.py` decides, in this order:
+
+1. A kind already set at ingest (fixtures and the demo set `rfq` / `acceptance`) is kept.
+2. Subject matches `Booking BK-XXXXXXXX confirmed` (any sender): `booking_confirmation`.
+3. Sender `tracking@hackloop.mail`: `tracking`. Sender `ratedesk@hackloop.mail`: `rate_desk_reply`.
+4. Sender on the start-kit carrier list: `tariff` for an airline mail with an attachment, otherwise `carrier_bid` (truckers always `carrier_bid`).
+5. Any other sender is a customer. A mail that starts a thread is `rfq`. A reply in a thread whose session is not at stage `quoted` is `follow_up`.
+6. A customer reply in a `quoted` thread is judged by a multilingual keyword check. A keyword acceptance is final. With `ROUTER_BACKEND=gateway`, every other reply is sent once to `ROUTER_MODEL` through the 5U gateway (labels A/Q/D/U, accepted at probability 0.7 or more); on any gateway error the keyword answer stands. Result: `acceptance`, `follow_up` (question or decline) or `unknown` (unclear).
+
+| Kind | Agent (`raw.routing.agent`) | Handler today |
+| ---- | ----- | ------- |
+| `rfq` | `rfq_booking` | `app.workflows.rfq:handle_rfq` |
+| `acceptance` | `rfq_booking` | `app.workflows.booking:handle_acceptance` |
+| `follow_up`, `carrier_bid`, `rate_desk_reply`, `booking_confirmation` | `rfq_booking` | none |
+| `tracking` | `track_trace` | none |
+| `tariff` | `tariff_ingestion` | none |
+| `unknown` | none | none |
+
+### Adding a handler
+
+Add one line to `HANDLERS` in `backend/app/platform/router.py`, e.g. `"tracking": "app.crm.tracking:handle_tracking_mail"`. A handler is `handler(db, message)`: it runs inside the routing job's transaction, must be safe to run twice for the same mail (a failed job is retried), and signals failure by raising. A rerun reuses the stored decision; it does not decide again.
+
+### What the router writes on `messages.raw`
+
+| Key | Written by | Content |
+| --- | ---------- | ------- |
+| `raw.mail` | mailbox poll | The untouched poll item from `GET /v1/mailbox/messages` (includes `references`, `attachments`). Absent for fixture/demo mail. |
+| `raw.routing` | router | `kind`, `agent`, `decided_by` (`preset` \| `sender_rule` \| `thread_rule` \| `keyword` \| `gateway` \| `fallback`), `rule`, `sender` (`email`, `name`, `kind`: `airline` \| `trucker` \| `rate_desk` \| `tracking` \| `customer`), `starts_thread`, `model`, `probabilities` (gateway label probabilities, e.g. `{"A": 0.93}`), `error` |
+| `raw.rfq` | RFQ agent (T3) | Fields `handle_rfq` reads. The router does not write it. |
+
+### Timeline event
+
+When no handler runs for a mail and its thread has a session, the router appends a `mail_routed` session event with payload `external_id`, `kind`, `agent`, `decided_by`, `sender`, `simulated`. Mail whose thread has no session (bids, tariffs, tracking questions, unknown new mail) gets no event.
+
+### Replying and threads
+
+- Reply target: `in_reply_to = int(message.external_id)`. `external_id` is the 5U mailbox id as a string.
+- `thread_id` is the first id in the mail's `references`, or the mail's own id when it starts a thread. A carrier's bid arrives in the thread of the enquiry we sent, not the customer's thread, so keep the id of each enquiry.
+
+### Live poll item (confirmed 2026-11-21)
+
+`GET /v1/mailbox/messages` returns `{"messages": [...], "next_since_id": int}`. Each message has `id` (int), `from`, `to`, `subject`, `body` (strings), `in_reply_to` (int or null), `references` (list of ids, empty for a thread starter), `received_at` (ISO-8601 with offset) and `attachments` (list). No rate-limit headers were returned on the poll. Customers write from `@hackloop.mail` addresses that are not on the carrier list.
+
+### Router settings
+
+| Variable | Default | Meaning |
+| -------- | ------- | ------- |
+| `ROUTER_BACKEND` | `keyword` | `keyword` (offline) or `gateway` (replies the keyword check cannot accept go to the gateway model; counts as gateway spend) |
+| `ROUTER_MODEL` | empty | Gateway model for that step; must be a non-reasoning model that supports `logprobs`. Empty means the keyword answer is kept |
+| `MAILBOX_POLL_SECONDS` | `1.5` | Minimum gap between mailbox polls (live only) |
