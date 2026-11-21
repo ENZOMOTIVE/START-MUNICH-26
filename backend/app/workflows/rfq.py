@@ -19,7 +19,7 @@ from app.core.config import get_settings
 from app.core.errors import DomainError
 from app.db import repositories
 from app.db.models import ActionIntentRow, MessageRow, QuoteDecisionRow, RfqRow, SessionRow
-from app.platform import get_adapters
+from app.platform import get_adapters, runlimits
 from app.platform.decisions import reply_text
 from app.platform.outbox import deliver_intent
 from app.platform.routing import RATE_DESK_ADDRESS
@@ -140,15 +140,20 @@ def assess(db: Session, root: MessageRow) -> dict:
         method = "preset"
     else:
         merged = merge([(m.subject, reply_text(m.body)) for m in mails])
-        if merged["missing"]:
-            # "All details are in the attached PDF": read the files that are not DG papers too.
+        if merged["missing"] or "volume_m3" not in merged["fields"]:
+            # "All details are in the attached PDF": read the files that are not DG papers
+            # too. The mail's own words come first, so the file only fills what it leaves open.
             merged = merge(
                 [
                     (
                         m.subject,
                         "\n".join(
-                            [d.get("text", "") for d in documents.collect(db, m) if not d["kinds"]]
-                            + [reply_text(m.body)]
+                            [reply_text(m.body) or ""]
+                            + [
+                                d.get("text", "")
+                                for d in documents.collect(db, m)
+                                if not d["kinds"]
+                            ]
                         ),
                     )
                     for m in mails
@@ -166,6 +171,9 @@ def assess(db: Session, root: MessageRow) -> dict:
     missing = [name for name in REQUIRED if name not in fields]
     if fields.get("pickup_required") and not fields.get("pickup_zone"):
         missing.append("pickup_zone")  # a pickup with no place cannot be priced; never drop it
+    if missing and not fields.get("volume_m3"):
+        # When we have to ask anyway, ask for the volume too: truckers refuse to bid without it.
+        missing.append("volume_m3")
     return {
         "fields": fields,
         "missing": missing,
@@ -283,7 +291,12 @@ def handle_rfq(db: Session, message: MessageRow) -> SessionRow:
             send(db, quote_mail)  # only acts on a quote that provably never left
         return session
 
-    found = assess(db, message)
+    if rfq is None and clock.now() >= _aware(message.received_at) + RFQ_TTL:
+        # Old mail (a backlog after a restart): it is recorded as expired below, without
+        # downloading its attachments, asking a model or pricing it.
+        found = {"fields": {}, "missing": list(REQUIRED)}
+    else:
+        found = assess(db, message)
     if not found["missing"]:
         found["fields"] = _validated(found["fields"])
     fields = found["fields"]
@@ -306,8 +319,16 @@ def handle_rfq(db: Session, message: MessageRow) -> SessionRow:
         db.flush()
     if session is None:
         session = SessionRow(rfq_id=rfq.id, stage="intake", deadline=rfq.expires_at, simulated=True)
-        if get_settings().hold_new_requests:
-            # Supervised trial: nothing is priced or sent until a person releases the request.
+        hold = get_settings().hold_new_requests
+        if not hold and clock.now() < _aware(rfq.expires_at):
+            try:
+                # Automatic run: a fresh request admits itself, inside RUN_MAX_RFQS and the
+                # run's window. Past either, it waits for a person instead of being dropped.
+                runlimits.admit(db, rfq.thread_id)
+            except DomainError:
+                hold = True
+        if hold:
+            # Nothing is priced or sent until a person releases the request.
             session.paused, session.exception = True, HELD_FOR_RELEASE
         db.add(session)
         db.flush()
@@ -391,6 +412,9 @@ def advance(db: Session, session: SessionRow, rfq: RfqRow, root: MessageRow, fou
         notes = [
             f"I could not use {r['filename']}: {r['reason']}." for r in dg["rejected_documents"]
         ]
+        if dg.get("uncovered_un_numbers"):
+            uncovered = ", ".join(dg["uncovered_un_numbers"])
+            notes.append(f"The declaration you sent does not cover {uncovered}.")
         if dg["unreadable_attachments"]:
             files = ", ".join(dg["unreadable_attachments"])
             notes.insert(0, f"I could not open this attachment: {files}.")
@@ -399,6 +423,7 @@ def advance(db: Session, session: SessionRow, rfq: RfqRow, root: MessageRow, fou
             mail["body"] = mail["body"].replace("\n\nBest regards", f"{note}\n\nBest regards")
         unusable = dg["unreadable_attachments"] + [r["filename"] for r in dg["rejected_documents"]]
         asked = dg["docs_missing"] + [f"unusable{len(unusable)}"]
+        asked += dg.get("uncovered_un_numbers") or []
         return _clarify(db, session, rfq, root, mail, asked, found)
     if session.stage == "clarifying":
         session.exception = None
@@ -481,10 +506,16 @@ def _cross_check(db: Session, session: SessionRow, root: MessageRow, fields: dic
         return
     text = "\n\n".join(f"{m.subject}\n{reply_text(m.body)}" for m in customer_mails(db, root))
     differences = model_check(model["gateway"], model["name"], text, fields)
-    root.raw = {**raw, "model_check": {"model": model["name"], "differences": differences}}
+    # No usable answer (stopped, over budget, timeout, bad JSON) is not an agreement.
+    result = "unavailable" if differences is None else "differs" if differences else "agrees"
+    check = {"model": model["name"], "result": result, "differences": differences}
+    root.raw = {**raw, "model_check": check}
     flag_modified(root, "raw")
     repositories.append_event(
-        db, session.id, "model_check", {"differences": differences, "simulated": False}
+        db,
+        session.id,
+        "model_check",
+        {"result": result, "differences": differences, "simulated": False},
     )
     # With no operator hold nobody would resume the session: the rules' reading stands at once.
     if differences and get_settings().hold_new_requests:
@@ -518,6 +549,18 @@ def pickup_bid(db: Session, session: SessionRow, rfq: RfqRow) -> PickupQuote | N
         trucker=best["carrier"],
         evidence=Evidence(source_file=f"mail:{best['external_id']}", method="bid"),
     )
+
+
+def pickup_reference(db: Session, session: SessionRow) -> str | None:
+    """The offer number of the cheapest trucker bid; the trucker asks for it in our quote."""
+    bids = [
+        e.payload
+        for e in repositories.events_for(db, session.id)
+        if e.type == "carrier_bid"
+        and e.payload.get("kind") == "pickup"
+        and e.payload.get("currency") == "EUR"
+    ]
+    return min(bids, key=lambda b: Decimal(b["amount"])).get("reference") if bids else None
 
 
 def pickup_answers_in(db: Session, session: SessionRow, rfq: RfqRow) -> bool:
@@ -562,6 +605,8 @@ def _ask_truckers(db: Session, session: SessionRow, rfq: RfqRow) -> bool:
     volume = _weight(rfq.volume_m3) if rfq.volume_m3 is not None else None
     mails = customer_mails(db, db.get(MessageRow, rfq.message_id))
     text = "\n".join(f"{reply_text(m.body)}\n{m.subject}" for m in mails)
+    # The postcode may only be in an attached request; truckers refuse a bare zone.
+    text += "\n".join(d.get("text", "") for m in mails for d in documents.collect(db, m))
     mail = replies.pickup_enquiry(
         rfq.pickup_zone,
         airport,
@@ -737,6 +782,7 @@ def commit_first_quote(
             [c.get("code") for c in candidate.charges or [] if c.get("code") != "pickup"],
             candidate.valid_until,
             rfq.pickup_zone if rfq.pickup_required else None,
+            pickup_reference(db, session),
         )
         try:
             with db.begin_nested():

@@ -145,6 +145,8 @@ def extract(subject: str, body: str) -> dict:
     forwarded mail ("RE: FW: ... RUH / 30 PCS 708 KGS") while asking for another shipment.
     """
     found = _read(body or "")
+    if re.match(r"\s*(?:re|fwd?|aw|wg)\s*:", subject or "", re.IGNORECASE):
+        return found  # a reply or forward: its subject describes some earlier mail
     for name, value in _read(subject or "")["fields"].items():
         found["fields"].setdefault(name, value)
     return found
