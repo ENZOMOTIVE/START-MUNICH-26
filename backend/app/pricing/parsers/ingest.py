@@ -3,6 +3,7 @@ ReviewExceptions. No file is silently skipped: every file in the directory is ac
 
     python -m app.pricing.parsers.ingest [--kit DIR] [--store DIR] [--snapshot FILE] [--no-store]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -16,8 +17,8 @@ from decimal import Decimal
 from pathlib import Path
 
 from .. import settings as config
-from ..quote_models import Evidence, ReviewException
 from ..money import MoneyError, parse_number
+from ..quote_models import ReviewException
 from . import docx as _docx  # noqa: F401  (registers readers)
 from . import pdf as _pdf  # noqa: F401
 from . import txt as _txt  # noqa: F401
@@ -27,10 +28,28 @@ from .ocr import parse_image_set
 from .parser import parse_rows
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
-REF_FILES = {"pickup_zones.csv", "carrier-list.csv"}      # reference data, not tariffs
+REF_FILES = {"pickup_zones.csv", "carrier-list.csv"}  # reference data, not tariffs
 GERMAN_ORIGINS = {"FRA", "MUC", "DUS", "HAM", "STR", "CGN"}
-_MONTHS = {m: i for i, m in enumerate(["january", "february", "march", "april", "may", "june", "july",
-                                       "august", "september", "october", "november", "december"], 1)}
+_MONTHS = {
+    m: i
+    for i, m in enumerate(
+        [
+            "january",
+            "february",
+            "march",
+            "april",
+            "may",
+            "june",
+            "july",
+            "august",
+            "september",
+            "october",
+            "november",
+            "december",
+        ],
+        1,
+    )
+}
 
 
 @dataclass
@@ -53,10 +72,16 @@ class SetResult:
         return "review"
 
     def to_dict(self) -> dict:
-        return {"set_id": self.set_id, "version": self.version, "carrier": self.carrier, "status": self.status,
-                "files": self.files, "methods": self.methods,
-                "records": [r.to_dict() for r in self.records],
-                "exceptions": [e.to_dict() for e in self.exceptions]}
+        return {
+            "set_id": self.set_id,
+            "version": self.version,
+            "carrier": self.carrier,
+            "status": self.status,
+            "files": self.files,
+            "methods": self.methods,
+            "records": [r.to_dict() for r in self.records],
+            "exceptions": [e.to_dict() for e in self.exceptions],
+        }
 
 
 def group_key(p: Path) -> str:
@@ -69,7 +94,9 @@ def carrier_hint(set_id: str) -> str:
 
 
 def set_version(set_id: str, checksums: dict[str, str]) -> str:
-    h = hashlib.sha256("|".join(f"{n}:{c}" for n, c in sorted(checksums.items())).encode()).hexdigest()
+    h = hashlib.sha256(
+        "|".join(f"{n}:{c}" for n, c in sorted(checksums.items())).encode()
+    ).hexdigest()
     return f"{set_id}@{h[:12]}"
 
 
@@ -78,21 +105,26 @@ def parse_date(raw: str) -> tuple[dt.date | None, dt.date | None]:
     s = raw.strip()
     m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", s)
     if m:
-        d = dt.date(int(m[1]), int(m[2]), int(m[3])); return d, d
-    m = re.match(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$", s)          # German dd.mm.yyyy
+        d = dt.date(int(m[1]), int(m[2]), int(m[3]))
+        return d, d
+    m = re.match(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$", s)  # German dd.mm.yyyy
     if m:
-        d = dt.date(int(m[3]), int(m[2]), int(m[1])); return d, d
+        d = dt.date(int(m[3]), int(m[2]), int(m[1]))
+        return d, d
     m = re.match(r"^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$", s)
     if m and m[2].lower() in _MONTHS:
-        d = dt.date(int(m[3]), _MONTHS[m[2].lower()], int(m[1])); return d, d
+        d = dt.date(int(m[3]), _MONTHS[m[2].lower()], int(m[1]))
+        return d, d
     m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", s)
     if m:
         a, b, y = int(m[1]), int(m[2]), int(m[3])
+
         def mk(day, mon):
             try:
                 return dt.date(y, mon, day)
             except ValueError:
                 return None
+
         return mk(a, b), mk(b, a)
     return None, None
 
@@ -117,31 +149,54 @@ def _rules(ps: ParsedSet) -> tuple[dict, list[ReviewException]]:
         out["divisor"] = parse_number(m.group(1))
     else:
         out["divisor"] = Decimal(config.DEFAULT_DIVISOR_KG_PER_M3)
-        exc.append(ReviewException(ps.set_id, "divisor_not_stated",
-                                   "no volume divisor in sheet; using the challenge default 1 m3 = 167 kg",
-                                   src, "set", blocking=False))
+        exc.append(
+            ReviewException(
+                ps.set_id,
+                "divisor_not_stated",
+                "no volume divisor in sheet; using the challenge default 1 m3 = 167 kg",
+                src,
+                "set",
+                blocking=False,
+            )
+        )
     if "billed on" in text or "billed weight" in text:
         out["surcharge_basis"] = "billed"
     elif re.search(r"surcharges?[^.]*actual weight", text):
         out["surcharge_basis"] = "actual"
     else:
         out["surcharge_basis"] = "billed"
-        exc.append(ReviewException(ps.set_id, "surcharge_basis_not_stated",
-                                   "surcharge basis not stated; assuming per kg of billed weight", src, "set",
-                                   blocking=False))
+        exc.append(
+            ReviewException(
+                ps.set_id,
+                "surcharge_basis_not_stated",
+                "surcharge basis not stated; assuming per kg of billed weight",
+                src,
+                "set",
+                blocking=False,
+            )
+        )
     if "minimum charge applies to the freight before surcharges" in text:
         out["min_before_surcharges"] = True
     else:
         out["min_before_surcharges"] = True
-        exc.append(ReviewException(ps.set_id, "minimum_rule_not_stated",
-                                   "minimum-charge rule not stated; assuming it applies to freight before "
-                                   "surcharges", src, "set", blocking=False))
+        exc.append(
+            ReviewException(
+                ps.set_id,
+                "minimum_rule_not_stated",
+                "minimum-charge rule not stated; assuming it applies to freight before surcharges",
+                src,
+                "set",
+                blocking=False,
+            )
+        )
     m = re.search(r"all rates are per kg[^.]*?in ([a-z]{3})", text)
     out["rates_currency"] = m.group(1).upper() if m else None
     return out, exc
 
 
-def validate(ps: ParsedSet, version: str, files: list[str]) -> tuple[list[LaneRate], list[ReviewException]]:
+def validate(
+    ps: ParsedSet, version: str, files: list[str]
+) -> tuple[list[LaneRate], list[ReviewException]]:
     exc = list(ps.exceptions)
     src = files[0] if files else None
 
@@ -151,9 +206,16 @@ def validate(ps: ParsedSet, version: str, files: list[str]) -> tuple[list[LaneRa
     carrier = ps.carrier
     if not carrier:
         carrier = carrier_hint(ps.set_id)
-        exc.append(ReviewException(ps.set_id, "carrier_from_filename",
-                                   f"carrier name not found in sheet; using filename: {carrier}", src, "set",
-                                   blocking=False))
+        exc.append(
+            ReviewException(
+                ps.set_id,
+                "carrier_from_filename",
+                f"carrier name not found in sheet; using filename: {carrier}",
+                src,
+                "set",
+                blocking=False,
+            )
+        )
     rules, rexc = _rules(ps)
     exc += rexc
     currency = ps.currency.value if ps.currency else None
@@ -161,7 +223,10 @@ def validate(ps: ParsedSet, version: str, files: list[str]) -> tuple[list[LaneRa
         block_set("currency_missing", f"no readable currency (got {currency!r})")
         currency = None
     elif rules["rates_currency"] and rules["rates_currency"] != currency:
-        block_set("currency_conflict", f"header says {currency}, rules text says {rules['rates_currency']}")
+        block_set(
+            "currency_conflict",
+            f"header says {currency}, rules text says {rules['rates_currency']}",
+        )
         currency = None
     validity = None
     if not ps.valid_from or not ps.valid_to:
@@ -175,7 +240,9 @@ def validate(ps: ParsedSet, version: str, files: list[str]) -> tuple[list[LaneRa
     if currency is None or validity is None:
         return [], exc
 
-    blocked_lanes = {(e.key or "").split(":")[0] for e in exc if e.blocking and e.scope in ("lane", "cell")}
+    blocked_lanes = {
+        (e.key or "").split(":")[0] for e in exc if e.blocking and e.scope in ("lane", "cell")
+    }
     all_breaks = sorted({b for ln in ps.lanes.values() for b in ln.breaks})
     records = []
     for key, ln in sorted(ps.lanes.items()):
@@ -189,42 +256,107 @@ def validate(ps: ParsedSet, version: str, files: list[str]) -> tuple[list[LaneRa
         if 0 not in ln.breaks or len(ln.breaks) < 2:
             missing.append("breaks")
         if missing:
-            exc.append(ReviewException(ps.set_id, "lane_incomplete", f"{key}: missing {', '.join(missing)}",
-                                       src, "lane", key, blocking=True))
+            exc.append(
+                ReviewException(
+                    ps.set_id,
+                    "lane_incomplete",
+                    f"{key}: missing {', '.join(missing)}",
+                    src,
+                    "lane",
+                    key,
+                    blocking=True,
+                )
+            )
             continue
         if key in blocked_lanes:
             continue
-        nums = [ln.min_charge.value, ln.fuel_per_kg.value, ln.security_per_kg.value] + \
-               [f.value for f in ln.breaks.values()]
-        if any(n < 0 for n in nums) or any(f.value <= 0 or f.value > 100 for f in ln.breaks.values()):
-            exc.append(ReviewException(ps.set_id, "implausible_value", f"{key}: rate out of range", src, "lane",
-                                       key, blocking=True))
+        nums = [ln.min_charge.value, ln.fuel_per_kg.value, ln.security_per_kg.value] + [
+            f.value for f in ln.breaks.values()
+        ]
+        if any(n < 0 for n in nums) or any(
+            f.value <= 0 or f.value > 100 for f in ln.breaks.values()
+        ):
+            exc.append(
+                ReviewException(
+                    ps.set_id,
+                    "implausible_value",
+                    f"{key}: rate out of range",
+                    src,
+                    "lane",
+                    key,
+                    blocking=True,
+                )
+            )
             continue
         brs = sorted((b, f.value) for b, f in ln.breaks.items())
         if any(brs[i + 1][1] > brs[i][1] for i in range(len(brs) - 1)):
-            exc.append(ReviewException(ps.set_id, "rate_rises_with_weight",
-                                       f"{key}: a higher break has a higher rate {brs}", src, "lane", key,
-                                       blocking=False))
+            exc.append(
+                ReviewException(
+                    ps.set_id,
+                    "rate_rises_with_weight",
+                    f"{key}: a higher break has a higher rate {brs}",
+                    src,
+                    "lane",
+                    key,
+                    blocking=False,
+                )
+            )
         if ln.transit_days is None:
-            exc.append(ReviewException(ps.set_id, "transit_missing", f"{key}: no transit time", src, "lane", key,
-                                       blocking=False))
+            exc.append(
+                ReviewException(
+                    ps.set_id,
+                    "transit_missing",
+                    f"{key}: no transit time",
+                    src,
+                    "lane",
+                    key,
+                    blocking=False,
+                )
+            )
         if ln.origin not in GERMAN_ORIGINS:
-            exc.append(ReviewException(ps.set_id, "non_german_origin", f"{key}: origin not a German airport",
-                                       src, "lane", key, blocking=False))
-        ev = {"min_charge": ln.min_charge.evidence, "fuel_per_kg": ln.fuel_per_kg.evidence,
-              "security_per_kg": ln.security_per_kg.evidence,
-              **{f"break_{b}": f.evidence for b, f in ln.breaks.items()}}
+            exc.append(
+                ReviewException(
+                    ps.set_id,
+                    "non_german_origin",
+                    f"{key}: origin not a German airport",
+                    src,
+                    "lane",
+                    key,
+                    blocking=False,
+                )
+            )
+        ev = {
+            "min_charge": ln.min_charge.evidence,
+            "fuel_per_kg": ln.fuel_per_kg.evidence,
+            "security_per_kg": ln.security_per_kg.evidence,
+            **{f"break_{b}": f.evidence for b, f in ln.breaks.items()},
+        }
         if ln.transit_days:
             ev["transit_days"] = ln.transit_days.evidence
         ev["currency"] = ps.currency.evidence
         ev["validity"] = ps.valid_from.evidence
-        records.append(LaneRate(
-            set_id=ps.set_id, version=version, carrier=carrier, origin=ln.origin, destination=ln.destination,
-            currency=currency, transit_days=ln.transit_days.value if ln.transit_days else None,
-            min_charge=ln.min_charge.value, breaks=tuple(brs), fuel_per_kg=ln.fuel_per_kg.value,
-            security_per_kg=ln.security_per_kg.value, divisor_kg_per_m3=rules["divisor"],
-            surcharge_basis=rules["surcharge_basis"], min_before_surcharges=rules["min_before_surcharges"],
-            valid_from=validity[0], valid_to=validity[1], source_files=tuple(files), evidence=ev))
+        records.append(
+            LaneRate(
+                set_id=ps.set_id,
+                version=version,
+                carrier=carrier,
+                origin=ln.origin,
+                destination=ln.destination,
+                currency=currency,
+                transit_days=ln.transit_days.value if ln.transit_days else None,
+                min_charge=ln.min_charge.value,
+                breaks=tuple(brs),
+                fuel_per_kg=ln.fuel_per_kg.value,
+                security_per_kg=ln.security_per_kg.value,
+                divisor_kg_per_m3=rules["divisor"],
+                surcharge_basis=rules["surcharge_basis"],
+                min_before_surcharges=rules["min_before_surcharges"],
+                valid_from=validity[0],
+                valid_to=validity[1],
+                source_files=tuple(files),
+                evidence=ev,
+            )
+        )
     if all_breaks and records:
         pass
     return records, exc
@@ -234,7 +366,9 @@ def ingest_group(set_id: str, paths: list[Path]) -> SetResult:
     paths = sorted(paths)
     checksums = {p.name: sha256(p) for p in paths}
     version = set_version(set_id, checksums)
-    files = [{"name": p.name, "checksum": checksums[p.name], "bytes": p.stat().st_size} for p in paths]
+    files = [
+        {"name": p.name, "checksum": checksums[p.name], "bytes": p.stat().st_size} for p in paths
+    ]
     try:
         if all(p.suffix.lower() in IMAGE_SUFFIXES for p in paths):
             ps = parse_image_set(paths, set_id, checksums)
@@ -248,8 +382,16 @@ def ingest_group(set_id: str, paths: list[Path]) -> SetResult:
             ps = parse_rows(rows, set_id, checksums)
     except Exception as e:  # unreadable file -> visible exception, never a crash or a silent skip
         res = SetResult(set_id, version, carrier_hint(set_id), files)
-        res.exceptions.append(ReviewException(set_id, "unreadable_file", f"{type(e).__name__}: {e}",
-                                              ", ".join(checksums), "set", blocking=True))
+        res.exceptions.append(
+            ReviewException(
+                set_id,
+                "unreadable_file",
+                f"{type(e).__name__}: {e}",
+                ", ".join(checksums),
+                "set",
+                blocking=True,
+            )
+        )
         return res
     records, exc = validate(ps, version, [p.name for p in paths])
     carrier = records[0].carrier if records else (ps.carrier or carrier_hint(set_id))
@@ -283,8 +425,10 @@ def report(results: list[SetResult], other: list[dict]) -> str:
     for r in results:
         blk = [e for e in r.exceptions if e.blocking]
         warn = [e for e in r.exceptions if not e.blocking]
-        out.append(f"[{r.status:8}] {r.carrier:<24} {len(r.records):>2} lanes  {len(blk)} blocking / "
-                   f"{len(warn)} non-blocking exc  via {'+'.join(r.methods)}  ({r.version})")
+        out.append(
+            f"[{r.status:8}] {r.carrier:<24} {len(r.records):>2} lanes  {len(blk)} blocking / "
+            f"{len(warn)} non-blocking exc  via {'+'.join(r.methods)}  ({r.version})"
+        )
         for e in blk[:12]:
             out.append(f"      BLOCK {e.reason}: {e.detail[:140]}")
         reasons = defaultdict(int)
@@ -294,14 +438,20 @@ def report(results: list[SetResult], other: list[dict]) -> str:
             out.append("      note  " + ", ".join(f"{k} x{v}" for k, v in sorted(reasons.items())))
     for o in other:
         out.append(f"[other   ] {o['file']}: {o['role']}")
-    out.append(f"TOTAL approved lanes: {sum(len(r.records) for r in results)} across {len(results)} tariff sets, "
-               f"{sum(len(r.files) for r in results)} files")
+    out.append(
+        f"TOTAL approved lanes: {sum(len(r.records) for r in results)} across {len(results)} tariff sets, "
+        f"{sum(len(r.files) for r in results)} files"
+    )
     return "\n".join(out)
 
 
 def write_snapshot(results: list[SetResult], other: list[dict], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = {"kind": "pricing.tariff_snapshot", "sets": [r.to_dict() for r in results], "other_files": other}
+    data = {
+        "kind": "pricing.tariff_snapshot",
+        "sets": [r.to_dict() for r in results],
+        "other_files": other,
+    }
     path.write_text(json.dumps(data, indent=1, sort_keys=False) + "\n")
 
 
@@ -316,6 +466,7 @@ def main(argv: list[str] | None = None) -> int:
     print(report(results, other))
     if not a.no_store:
         from .store import TariffStore
+
         st = TariffStore(a.store)
         for r, paths in zip(results, [discover(a.kit)[0][r.set_id] for r in results]):
             new = st.commit(r, paths)

@@ -3,14 +3,15 @@
 The team's `app.core.config.Settings` is the source of truth (`HACKATHON_API_BASE`, `HACKATHON_API_KEY`).
 `HACK_API_KEY` / `HACK_BASE_URL` are still accepted as a fallback for the standalone CLIs.
 """
+
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-PKG = Path(__file__).resolve().parent                 # backend/app/pricing
-BACKEND = PKG.parents[1]                              # backend/
-REPO = PKG.parents[2]                                 # repo root (absent inside the api container)
+PKG = Path(__file__).resolve().parent  # backend/app/pricing
+BACKEND = PKG.parents[1]  # backend/
+REPO = PKG.parents[2]  # repo root (absent inside the api container)
 DATA_DIR = PKG / "data"
 KIT_DIR = Path(os.environ.get("PRICING_KIT_DIR", REPO / "starter-kit"))
 STORE_DIR = Path(os.environ.get("PRICING_STORE_DIR", REPO / "var" / "pricing_store"))
@@ -22,7 +23,7 @@ DEFAULT_DIVISOR_KG_PER_M3 = 167
 
 def load_dotenv(path: Path | None = None) -> None:
     """Minimal .env loader (no dependency). Existing env vars win."""
-    for p in ([path] if path else [REPO / ".env", BACKEND / ".env"]):
+    for p in [path] if path else [REPO / ".env", BACKEND / ".env"]:
         if not p or not p.exists():
             continue
         for line in p.read_text().splitlines():

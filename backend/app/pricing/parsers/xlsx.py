@@ -1,4 +1,5 @@
 """XLSX tariffs (elbflug, kestrel, vega, wayzata). Cells read as stored values, no float formatting games."""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -25,6 +26,7 @@ def _cell(v) -> str:
 def read_xlsx(path: Path, checksum: str) -> list[Row]:
     import openpyxl
     from openpyxl.utils import get_column_letter
+
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     rows: list[Row] = []
     for ws in wb.worksheets:

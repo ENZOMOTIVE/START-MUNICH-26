@@ -14,6 +14,7 @@ Confidence model (no guessing):
        - not confirmed, no manual               -> blocking ReviewException, field left empty
   If tesseract is not installed, every cell falls into the last two cases.
 """
+
 from __future__ import annotations
 
 import json
@@ -25,9 +26,9 @@ from collections import Counter
 from decimal import Decimal
 from pathlib import Path
 
-from ..settings import MANUAL_DIR
-from ..quote_models import Evidence, ReviewException
 from ..money import parse_number
+from ..quote_models import Evidence, ReviewException
+from ..settings import MANUAL_DIR
 from .base import Field, ParsedSet, Row
 
 MONEY_CELL = re.compile(r"^\d{1,4},\d{2}$")
@@ -42,8 +43,15 @@ def tesseract_available() -> bool:
 def _passes(img_path: Path) -> list[tuple[str, str]]:
     """Return [(pass_name, text)]."""
     from PIL import Image, ImageOps
+
     out = []
-    variants = [("orig", None, "6"), ("x2", 2, "6"), ("x3", 3, "6"), ("x2bin", -2, "6"), ("x2psm4", 2, "4")]
+    variants = [
+        ("orig", None, "6"),
+        ("x2", 2, "6"),
+        ("x3", 3, "6"),
+        ("x2bin", -2, "6"),
+        ("x2psm4", 2, "4"),
+    ]
     with tempfile.TemporaryDirectory() as td:
         base = Image.open(img_path)
         for name, scale, psm in variants:
@@ -57,8 +65,9 @@ def _passes(img_path: Path) -> list[tuple[str, str]]:
                     g = g.point(lambda v: 255 if v > 160 else 0)
                 p = Path(td) / f"{name}.png"
                 g.save(p)
-            txt = subprocess.run(["tesseract", str(p), "-", "--psm", psm], capture_output=True,
-                                 text=True).stdout
+            txt = subprocess.run(
+                ["tesseract", str(p), "-", "--psm", psm], capture_output=True, text=True
+            ).stdout
             out.append((name, txt))
     return out
 
@@ -77,11 +86,14 @@ def _parse_pass(text: str) -> tuple[dict, dict]:
             header["currency"] = s.split(None, 1)[1].strip() if " " in s else ""
             continue
         if low.startswith("valid from"):
-            header["valid_from"] = s[len("valid from"):].strip(); continue
+            header["valid_from"] = s[len("valid from") :].strip()
+            continue
         if low.startswith("valid to"):
-            header["valid_to"] = s[len("valid to"):].strip(); continue
+            header["valid_to"] = s[len("valid to") :].strip()
+            continue
         if low.startswith(("all rates", "chargeable weight", "fuel and security", "the minimum")):
-            header["rules"].append(s); continue
+            header["rules"].append(s)
+            continue
         if low.startswith("lane"):
             b = [int(x) for x in BREAKS_RE.findall(s)]
             if "fuel" in low and "security" in low:
@@ -106,7 +118,7 @@ def _parse_pass(text: str) -> tuple[dict, dict]:
         toks = tm.group(2).split()
         brks = header.get("breaks") or []
         if len(toks) != 1 + len(brks):
-            continue      # token count off -> this pass says nothing about this row
+            continue  # token count off -> this pass says nothing about this row
         cells[(lane, "transit_days")] = tm.group(1)
         cells[(lane, "min_charge")] = toks[0]
         for b, t in zip(brks, toks[1:]):
@@ -137,8 +149,12 @@ def _load_manual(set_id: str, checksums: dict[str, str]) -> dict | None:
         return None
     m = json.loads(p.read_text())
     bound = m.get("source_checksums") or {}
-    if not bound or any(checksums.get(f) != c for f, c in bound.items()) or set(bound) != set(checksums):
-        return None   # transcription is for different image bytes: not trusted
+    if (
+        not bound
+        or any(checksums.get(f) != c for f, c in bound.items())
+        or set(bound) != set(checksums)
+    ):
+        return None  # transcription is for different image bytes: not trusted
     return m
 
 
@@ -173,28 +189,49 @@ def parse_image_set(paths: list[Path], set_id: str, checksums: dict[str, str]) -
                 for k, v in cells.items():
                     readings.setdefault(k, []).append((f"{p.name}:{name}", v))
     else:
-        ps.exceptions.append(ReviewException(
-            set_id, "ocr_unavailable", "tesseract not installed; scan cannot be OCR-read on this host",
-            files, "set", blocking=manual is None))
+        ps.exceptions.append(
+            ReviewException(
+                set_id,
+                "ocr_unavailable",
+                "tesseract not installed; scan cannot be OCR-read on this host",
+                files,
+                "set",
+                blocking=manual is None,
+            )
+        )
 
     def hdr(key: str):
         vals = Counter(h.get(key) for _, h in headers if h.get(key))
         return vals.most_common(1)[0][0] if vals else None
 
-    def ev(method: str, loc: str, raw: str | None, note: str | None = None, src: str = files) -> Evidence:
-        return Evidence(source_file=src, checksum=",".join(checksums[k] for k in sorted(checksums)),
-                        locator=loc, raw=raw, method=method, note=note)
+    def ev(
+        method: str, loc: str, raw: str | None, note: str | None = None, src: str = files
+    ) -> Evidence:
+        return Evidence(
+            source_file=src,
+            checksum=",".join(checksums[k] for k in sorted(checksums)),
+            locator=loc,
+            raw=raw,
+            method=method,
+            note=note,
+        )
 
     # header (carrier is printed on p1; currency/validity must be legible or manual-backed)
     ps.carrier = (manual or {}).get("airline")
-    for key, mkey in (("currency", "currency"), ("valid_from", "valid_from"), ("valid_to", "valid_to")):
+    for key, mkey in (
+        ("currency", "currency"),
+        ("valid_from", "valid_from"),
+        ("valid_to", "valid_to"),
+    ):
         v = hdr(key)
         if v:
             setattr(ps, key, Field(v, ev("ocr", f"header:{key}", v)))
         elif manual and manual.get(mkey):
             setattr(ps, key, Field(manual[mkey], ev("manual_transcription", f"header:{key}", None)))
-    ps.rules_text = [Row([r], files, "ocr header", "ocr") for r in
-                     dict.fromkeys(r for _, h in headers for r in h.get("rules", []))]
+    ps.rules_text = [
+        Row([r], files, "ocr header", "ocr")
+        for r in dict.fromkeys(r for _, h in headers for r in h.get("rules", []))
+    ]
 
     breaks = hdr_breaks = None
     bvals = Counter(tuple(h["breaks"]) for _, h in headers if h.get("breaks"))
@@ -206,7 +243,11 @@ def parse_image_set(paths: list[Path], set_id: str, checksums: dict[str, str]) -
     breaks = hdr_breaks or []
 
     lanes = sorted({k[0] for k in readings} | set((manual or {}).get("lanes", {})))
-    fields = ["transit_days", "min_charge"] + [f"break_{b}" for b in breaks] + ["fuel_per_kg", "security_per_kg"]
+    fields = (
+        ["transit_days", "min_charge"]
+        + [f"break_{b}" for b in breaks]
+        + ["fuel_per_kg", "security_per_kg"]
+    )
     for lane in lanes:
         o, d = lane.split("-")
         ln = ps.lane(o, d)
@@ -218,24 +259,63 @@ def parse_image_set(paths: list[Path], set_id: str, checksums: dict[str, str]) -
             chosen = None
             if ocr_val is not None:
                 if man is not None and _num(f, man) != _num(f, ocr_val):
-                    ps.exceptions.append(ReviewException(
-                        set_id, "ocr_manual_conflict",
-                        f"{lane} {f}: OCR reads {ocr_val} but hand transcription says {man}", files, "cell",
-                        f"{lane}:{f}", raw_s, True))
+                    ps.exceptions.append(
+                        ReviewException(
+                            set_id,
+                            "ocr_manual_conflict",
+                            f"{lane} {f}: OCR reads {ocr_val} but hand transcription says {man}",
+                            files,
+                            "cell",
+                            f"{lane}:{f}",
+                            raw_s,
+                            True,
+                        )
+                    )
                     continue
-                chosen = Field(_num(f, ocr_val), ev("ocr", f"{lane}:{f}", raw_s,
-                               "manual transcription agrees" if man is not None else None))
+                chosen = Field(
+                    _num(f, ocr_val),
+                    ev(
+                        "ocr",
+                        f"{lane}:{f}",
+                        raw_s,
+                        "manual transcription agrees" if man is not None else None,
+                    ),
+                )
             elif man is not None:
-                chosen = Field(_num(f, man), ev("manual_transcription", f"{lane}:{f}", raw_s,
-                               "OCR not confident; value from checksum-bound hand transcription"))
-                ps.exceptions.append(ReviewException(
-                    set_id, "ocr_illegible_manual_used",
-                    f"{lane} {f}: OCR not confident ({raw or 'no reading'}); using hand transcription {man}",
-                    files, "cell", f"{lane}:{f}", raw_s, blocking=False))
+                chosen = Field(
+                    _num(f, man),
+                    ev(
+                        "manual_transcription",
+                        f"{lane}:{f}",
+                        raw_s,
+                        "OCR not confident; value from checksum-bound hand transcription",
+                    ),
+                )
+                ps.exceptions.append(
+                    ReviewException(
+                        set_id,
+                        "ocr_illegible_manual_used",
+                        f"{lane} {f}: OCR not confident ({raw or 'no reading'}); using hand transcription {man}",
+                        files,
+                        "cell",
+                        f"{lane}:{f}",
+                        raw_s,
+                        blocking=False,
+                    )
+                )
             else:
-                ps.exceptions.append(ReviewException(
-                    set_id, "ocr_illegible", f"{lane} {f}: cannot be read confidently ({raw or 'no reading'})",
-                    files, "cell", f"{lane}:{f}", raw_s, True))
+                ps.exceptions.append(
+                    ReviewException(
+                        set_id,
+                        "ocr_illegible",
+                        f"{lane} {f}: cannot be read confidently ({raw or 'no reading'})",
+                        files,
+                        "cell",
+                        f"{lane}:{f}",
+                        raw_s,
+                        True,
+                    )
+                )
                 continue
             if f.startswith("break_"):
                 ln.breaks[int(f[6:])] = chosen

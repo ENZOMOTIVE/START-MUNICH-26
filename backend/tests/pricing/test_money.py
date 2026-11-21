@@ -1,15 +1,32 @@
 from decimal import Decimal
 
 import pytest
+from app.pricing.money import (
+    D,
+    MoneyError,
+    chargeable_weight,
+    fx_to_eur,
+    parse_number,
+    q2,
+    to_kg,
+    to_m3,
+    volume_from_dims,
+)
 
-from app.pricing.money import (D, MoneyError, chargeable_weight, fx_to_eur, parse_number, q2, to_kg, to_m3,
-                           volume_from_dims)
 
-
-@pytest.mark.parametrize("raw,expected", [
-    ("EUR 75.00", "75.00"), ("75,00", "75.00"), ("1,234.50", "1234.50"), ("1.234,50", "1234.50"),
-    ("3.73", "3.73"), ("  0,96 ", "0.96"), ("80", "80"), ("EUR 1.29", "1.29"),
-])
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("EUR 75.00", "75.00"),
+        ("75,00", "75.00"),
+        ("1,234.50", "1234.50"),
+        ("1.234,50", "1234.50"),
+        ("3.73", "3.73"),
+        ("  0,96 ", "0.96"),
+        ("80", "80"),
+        ("EUR 1.29", "1.29"),
+    ],
+)
 def test_parse_number(raw, expected):
     assert parse_number(raw) == Decimal(expected)
 
@@ -26,7 +43,7 @@ def test_float_refused():
 
 
 def test_unit_conversion_weight():
-    assert to_kg("100", "lb") == Decimal("45.359237")         # exact international pound
+    assert to_kg("100", "lb") == Decimal("45.359237")  # exact international pound
     assert to_kg("1.5", "t") == Decimal("1500.0")
     assert to_kg("2500", "g") == Decimal("2.5")
     with pytest.raises(MoneyError):
@@ -44,7 +61,7 @@ def test_unit_conversion_volume():
 
 
 def test_chargeable_weight():
-    assert chargeable_weight("50", "0.6") == Decimal("100.2")     # 0.6 * 167
+    assert chargeable_weight("50", "0.6") == Decimal("100.2")  # 0.6 * 167
     assert chargeable_weight("500", "1.0") == Decimal("500")
     assert chargeable_weight("50", "0.6", divisor=200) == Decimal("120.0")
 

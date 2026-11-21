@@ -1,4 +1,5 @@
 """Plain-text tariffs (yellowtail): columns separated by 2+ spaces or tabs."""
+
 from __future__ import annotations
 
 import re

@@ -11,20 +11,24 @@ Layouts seen in the kit (all handled, anything else becomes a ReviewException):
 Strictness: a data row must carry exactly the number of values its header promises, no blanks, every cell a
 clean number. Otherwise the row is not guessed at: it becomes a lane-scoped ReviewException.
 """
+
 from __future__ import annotations
 
 import re
 
-from ..quote_models import Evidence, ReviewException
 from ..money import MoneyError, parse_number
+from ..quote_models import Evidence, ReviewException
 from .base import Field, ParsedSet, Row
 
 _CODE = re.compile(r"\b([A-Z]{3})\b")
 _NOT_CODES = {"EUR", "USD", "GBP", "CHF", "KG", "CBM", "AWB", "IATA", "PER"}
 _BREAK_IN_CELL = re.compile(r"(?:from\s+)?(\d+)\s*kg\s*\+?", re.I)
 _BREAK_SIGNED = re.compile(r"^([+-])\s*(\d+)$")
-_SURCH = re.compile(r"^(?P<lane>.+?):\s*fuel\s*(?:[A-Z]{3}\s*)?(?P<fuel>\d+(?:[.,]\d+)?)\s*(?:per\s*kg)?"
-                    r"\s*,?\s*security\s*(?:[A-Z]{3}\s*)?(?P<sec>\d+(?:[.,]\d+)?)\s*(?:per\s*kg)?\s*$", re.I)
+_SURCH = re.compile(
+    r"^(?P<lane>.+?):\s*fuel\s*(?:[A-Z]{3}\s*)?(?P<fuel>\d+(?:[.,]\d+)?)\s*(?:per\s*kg)?"
+    r"\s*,?\s*security\s*(?:[A-Z]{3}\s*)?(?P<sec>\d+(?:[.,]\d+)?)\s*(?:per\s*kg)?\s*$",
+    re.I,
+)
 _TRANSIT = re.compile(r"^(?:D\s*\+\s*)?(\d+)(?:\s*days?)?$", re.I)
 _BLOCK_BREAK = re.compile(r"^(?:from\s+)?(\d+)\s*kg\s*\+?$", re.I)
 
@@ -54,7 +58,9 @@ def parse_transit(s: str) -> int:
 
 
 def _block_row(low: str) -> bool:
-    return low.startswith(("transit", "minimum", "fuel", "security")) or bool(_BLOCK_BREAK.match(low))
+    return low.startswith(("transit", "minimum", "fuel", "security")) or bool(
+        _BLOCK_BREAK.match(low)
+    )
 
 
 class _Ctx:
@@ -62,14 +68,36 @@ class _Ctx:
         self.ps, self.checksums = ps, checksums
 
     def ev(self, row: Row, note: str | None = None) -> Evidence:
-        return Evidence(source_file=row.source_file, checksum=self.checksums.get(row.source_file),
-                        locator=row.locator, raw=row.raw, method=row.method, note=note)
+        return Evidence(
+            source_file=row.source_file,
+            checksum=self.checksums.get(row.source_file),
+            locator=row.locator,
+            raw=row.raw,
+            method=row.method,
+            note=note,
+        )
 
-    def exc(self, reason: str, detail: str, row: Row | None = None, key: str | None = None,
-            scope: str = "lane", blocking: bool = True) -> None:
-        self.ps.exceptions.append(ReviewException(
-            set_id=self.ps.set_id, reason=reason, detail=detail, source_file=row.source_file if row else None,
-            scope=scope, key=key, raw=row.raw if row else None, blocking=blocking))
+    def exc(
+        self,
+        reason: str,
+        detail: str,
+        row: Row | None = None,
+        key: str | None = None,
+        scope: str = "lane",
+        blocking: bool = True,
+    ) -> None:
+        self.ps.exceptions.append(
+            ReviewException(
+                set_id=self.ps.set_id,
+                reason=reason,
+                detail=detail,
+                source_file=row.source_file if row else None,
+                scope=scope,
+                key=key,
+                raw=row.raw if row else None,
+                blocking=blocking,
+            )
+        )
 
     def put(self, lane, attr: str, value, row: Row, brk: int | None = None) -> None:
         """Set a field; a conflicting second value for the same field is an ambiguity, not an overwrite."""
@@ -77,8 +105,13 @@ class _Ctx:
         old = lane.breaks.get(brk) if brk is not None else getattr(lane, attr)
         if old is not None and old.value != value:
             name = f"break {brk}" if brk is not None else attr
-            self.exc("conflicting_value", f"{lane.key} {name}: {old.value} ({old.evidence.locator}) vs "
-                     f"{value} ({row.locator})", row, lane.key)
+            self.exc(
+                "conflicting_value",
+                f"{lane.key} {name}: {old.value} ({old.evidence.locator}) vs "
+                f"{value} ({row.locator})",
+                row,
+                lane.key,
+            )
             return
         if brk is not None:
             lane.breaks[brk] = f
@@ -108,19 +141,34 @@ def parse_rows(rows: list[Row], set_id: str, checksums: dict[str, str]) -> Parse
             ps.carrier = first.split("|")[0].strip() or ps.carrier
             continue
         if low == "currency" and len(cells) > 1:
-            ps.currency = Field(cells[1].strip().upper(), cx.ev(row)); continue
+            ps.currency = Field(cells[1].strip().upper(), cx.ev(row))
+            continue
         if low == "valid from" and len(cells) > 1:
-            ps.valid_from = Field(cells[1].strip(), cx.ev(row)); continue
+            ps.valid_from = Field(cells[1].strip(), cx.ev(row))
+            continue
         if low == "valid to" and len(cells) > 1:
-            ps.valid_to = Field(cells[1].strip(), cx.ev(row)); continue
-        if len(cells) == 1 and len(first) > 40 and not codes_in(first.split(":")[0]) \
-                or low.startswith(("all rates", "chargeable weight", "fuel and security", "the minimum")):
-            ps.rules_text.append(row); continue
+            ps.valid_to = Field(cells[1].strip(), cx.ev(row))
+            continue
+        if (
+            len(cells) == 1
+            and len(first) > 40
+            and not codes_in(first.split(":")[0])
+            or low.startswith(
+                ("all rates", "chargeable weight", "fuel and security", "the minimum")
+            )
+        ):
+            ps.rules_text.append(row)
+            continue
         if low.startswith("origin"):
             cs = codes_in(joined)
             origin_ctx = cs[0] if cs else None
             if not cs:
-                cx.exc("unreadable_origin", f"origin header without airport code: {joined}", row, scope="set")
+                cx.exc(
+                    "unreadable_origin",
+                    f"origin header without airport code: {joined}",
+                    row,
+                    scope="set",
+                )
             block = None
             continue
         if low.startswith("surcharges"):
@@ -144,7 +192,12 @@ def parse_rows(rows: list[Row], set_id: str, checksums: dict[str, str]) -> Parse
         lows = [c.lower() for c in cells]
         if len(bl) >= 3 and not _block_row(low):
             if bl != sorted(set(bl)) or bl[0] != 0:
-                cx.exc("bad_break_header", f"weight breaks not ascending from 0: {bl}", row, scope="set")
+                cx.exc(
+                    "bad_break_header",
+                    f"weight breaks not ascending from 0: {bl}",
+                    row,
+                    scope="set",
+                )
             breaks = bl
             has_fs_cols = "fuel" in lows and "security" in lows
             fs_table = False
@@ -180,8 +233,13 @@ def parse_rows(rows: list[Row], set_id: str, checksums: dict[str, str]) -> Parse
 
         cs = codes_in(first)
         if not cs:
-            cx.exc("unrecognised_row", f"row not understood, ignored for pricing: {joined}", row,
-                   scope="set", blocking=False)
+            cx.exc(
+                "unrecognised_row",
+                f"row not understood, ignored for pricing: {joined}",
+                row,
+                scope="set",
+                blocking=False,
+            )
             continue
         if len(cs) == 1:
             if not origin_ctx:
@@ -196,7 +254,7 @@ def parse_rows(rows: list[Row], set_id: str, checksums: dict[str, str]) -> Parse
         while vals and vals[-1] == "":
             vals.pop()
         if not vals:
-            block = lane          # block layout lane header
+            block = lane  # block layout lane header
             continue
         block = None
         if "" in vals:

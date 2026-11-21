@@ -7,6 +7,7 @@ Layout:  <store>/index.json
 Re-ingesting identical bytes is a no-op. A changed file creates a new version and makes it current; older
 versions are never rewritten, so a quote committed against version X can always reload X's evidence.
 """
+
 from __future__ import annotations
 
 import datetime as dt
@@ -50,7 +51,7 @@ class TariffStore:
                 if not dst.exists():
                     shutil.copy2(p, dst)
             data = result.to_dict()
-            data["ingested_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+            data["ingested_at"] = dt.datetime.now(dt.UTC).isoformat()
             vp.write_text(json.dumps(data, indent=1))
             entry["versions"].append(result.version)
         entry["current"] = result.version
@@ -67,7 +68,10 @@ class TariffStore:
         out = []
         for set_id, e in sorted(self._index().items()):
             if e.get("current"):
-                out += [LaneRate.from_dict(r) for r in self.load_version(set_id, e["current"])["records"]]
+                out += [
+                    LaneRate.from_dict(r)
+                    for r in self.load_version(set_id, e["current"])["records"]
+                ]
         return out
 
     def record(self, set_id: str, version: str, origin: str, dest: str) -> LaneRate | None:

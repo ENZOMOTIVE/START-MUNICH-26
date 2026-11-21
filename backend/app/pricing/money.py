@@ -1,4 +1,5 @@
 """Decimal helpers. No float ever enters a price: every input goes through D()."""
+
 from __future__ import annotations
 
 import re
@@ -8,9 +9,9 @@ CENT = Decimal("0.01")
 ZERO = Decimal("0")
 DEFAULT_ROUNDING = ROUND_HALF_UP
 
-_LB = Decimal("0.45359237")          # exact, international pound
-_FT3 = Decimal("0.028316846592")     # exact, (0.3048 m)^3
-_IN3 = Decimal("0.000016387064")     # exact, (0.0254 m)^3
+_LB = Decimal("0.45359237")  # exact, international pound
+_FT3 = Decimal("0.028316846592")  # exact, (0.3048 m)^3
+_IN3 = Decimal("0.000016387064")  # exact, (0.0254 m)^3
 
 
 class MoneyError(ValueError):
@@ -105,8 +106,13 @@ def to_m3(value, unit: str = "m3") -> Decimal:
 
 def volume_from_dims(length, width, height, unit: str = "cm", pieces: int = 1) -> Decimal:
     u = unit.strip().lower()
-    factor = {"cm": Decimal("0.01"), "mm": Decimal("0.001"), "m": Decimal(1),
-              "in": Decimal("0.0254"), "inch": Decimal("0.0254")}.get(u)
+    factor = {
+        "cm": Decimal("0.01"),
+        "mm": Decimal("0.001"),
+        "m": Decimal(1),
+        "in": Decimal("0.0254"),
+        "inch": Decimal("0.0254"),
+    }.get(u)
     if factor is None:
         raise MoneyError(f"unknown length unit {unit!r}")
     return D(length) * factor * D(width) * factor * D(height) * factor * pieces

@@ -1,4 +1,5 @@
 """DOCX tariffs (quetzal): paragraphs and tables in document order."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,6 +12,7 @@ def read_docx(path: Path, checksum: str) -> list[Row]:
     import docx
     from docx.table import Table
     from docx.text.paragraph import Paragraph
+
     d = docx.Document(str(path))
     rows: list[Row] = []
     p_i = t_i = 0
@@ -25,7 +27,9 @@ def read_docx(path: Path, checksum: str) -> list[Row]:
             t_i += 1
             for r_i, r in enumerate(Table(el, d).rows, 1):
                 cells, seen = [], set()
-                for c in r.cells:  # a merged cell is returned once per grid column: dedupe by identity
+                for (
+                    c
+                ) in r.cells:  # a merged cell is returned once per grid column: dedupe by identity
                     if id(c._tc) in seen:
                         continue
                     seen.add(id(c._tc))

@@ -3,6 +3,7 @@
 The truck price itself is NOT in any tariff: it comes from a trucker bid (T3 collects those by email) or a
 human. We never invent it: an RFQ that needs a pickup without a PickupQuote yields an incomplete candidate.
 """
+
 from __future__ import annotations
 
 import csv
@@ -13,8 +14,8 @@ from functools import lru_cache
 from pathlib import Path
 
 from . import settings as config
-from .quote_models import PricedCharge, Evidence, PricedOption
 from .money import D, fx_to_eur, q2
+from .quote_models import Evidence, PricedCharge, PricedOption
 
 
 @lru_cache
@@ -27,7 +28,10 @@ def zones(kit: Path | None = None) -> dict[str, dict]:
     out = {}
     with open(path, newline="", encoding="utf-8") as f:
         for r in csv.DictReader(f):
-            out[r["zone"].strip().zfill(2)] = {"area": r["area"].strip(), "airport": r["airport"].strip().upper()}
+            out[r["zone"].strip().zfill(2)] = {
+                "area": r["area"].strip(),
+                "airport": r["airport"].strip().upper(),
+            }
     return out
 
 
@@ -50,7 +54,7 @@ def airport_for_zone(zone: str | int | None) -> str | None:
 class PickupQuote:
     zone: str
     airport: str
-    cost: Decimal                 # in `currency`
+    cost: Decimal  # in `currency`
     currency: str = "EUR"
     fx_eur_per_unit: Decimal | None = None
     trucker: str | None = None
@@ -60,7 +64,9 @@ class PickupQuote:
         return fx_to_eur(D(self.cost), self.currency, self.fx_eur_per_unit)
 
 
-def apply_pickup(c: PricedOption, pickup_zone: str | None, pickup: PickupQuote | None) -> PricedOption:
+def apply_pickup(
+    c: PricedOption, pickup_zone: str | None, pickup: PickupQuote | None
+) -> PricedOption:
     """Add the pickup leg exactly once and (re)compute the all-in total. Idempotent."""
     c.charges = [x for x in c.charges if x.code != "pickup"]
     c.missing = [m for m in c.missing if not m.startswith("pickup")]
@@ -80,10 +86,16 @@ def apply_pickup(c: PricedOption, pickup_zone: str | None, pickup: PickupQuote |
             except ValueError:
                 c.missing.append("pickup_fx")
             else:
-                c.charges.append(PricedCharge(
-                    "pickup", f"Truck pickup zone {pickup.zone} -> {airport}" +
-                    (f" ({pickup.trucker})" if pickup.trucker else ""), amt, "EUR",
-                    evidence=pickup.evidence))
+                c.charges.append(
+                    PricedCharge(
+                        "pickup",
+                        f"Truck pickup zone {pickup.zone} -> {airport}"
+                        + (f" ({pickup.trucker})" if pickup.trucker else ""),
+                        amt,
+                        "EUR",
+                        evidence=pickup.evidence,
+                    )
+                )
     c.complete = not c.missing and c.air_total is not None
     pick = sum((x.amount for x in c.charges if x.code == "pickup"), Decimal(0))
     c.total = q2(c.air_total + pick) if c.complete else None

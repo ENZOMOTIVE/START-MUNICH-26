@@ -1,4 +1,5 @@
 """Contracts. PricedOption is the T2 -> T3 handoff: T3 quotes and books from it without re-deriving a price."""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -28,11 +29,12 @@ def _jsonable(v: Any) -> Any:
 @dataclass(frozen=True)
 class Evidence:
     """Where a value came from. `locator` is file-format specific (line 12 / Sheet1!C5 / page 1 line 9 / ocr pass)."""
+
     source_file: str
     checksum: str | None = None
     locator: str | None = None
     raw: str | None = None
-    method: str | None = None          # txt | xlsx | pdf | docx | ocr | manual_transcription | portal | bid
+    method: str | None = None  # txt | xlsx | pdf | docx | ocr | manual_transcription | portal | bid
     note: str | None = None
 
     def to_dict(self) -> dict:
@@ -42,14 +44,15 @@ class Evidence:
 @dataclass(frozen=True)
 class ReviewException:
     """A visible 'a human must look at this' record. Never replaced by an invented value."""
+
     set_id: str
-    reason: str                         # short machine code, e.g. lane_incomplete, ocr_illegible
+    reason: str  # short machine code, e.g. lane_incomplete, ocr_illegible
     detail: str
     source_file: str | None = None
-    scope: str = "set"                  # set | lane | cell | portal | request
-    key: str | None = None              # lane key / field
+    scope: str = "set"  # set | lane | cell | portal | request
+    key: str | None = None  # lane key / field
     raw: str | None = None
-    blocking: bool = True               # True => the affected records are NOT approved
+    blocking: bool = True  # True => the affected records are NOT approved
 
     def to_dict(self) -> dict:
         return {k: v for k, v in self.__dict__.items() if v is not None}
@@ -57,19 +60,24 @@ class ReviewException:
 
 @dataclass(frozen=True)
 class PricedCharge:
-    code: str                           # air_freight | fuel | security | air_all_in | pickup | fx_note
+    code: str  # air_freight | fuel | security | air_all_in | pickup | fx_note
     description: str
-    amount: Decimal                     # exact (unrounded) amount in `currency`
+    amount: Decimal  # exact (unrounded) amount in `currency`
     currency: str = "EUR"
     basis_kg: Decimal | None = None
-    rate: Decimal | None = None         # per kg, when applicable
+    rate: Decimal | None = None  # per kg, when applicable
     included_in_total: bool = True
     evidence: Evidence | None = None
 
     def to_dict(self) -> dict:
-        d = {"code": self.code, "description": self.description, "amount": str(q2(self.amount)),
-             "amount_exact": dstr(self.amount), "currency": self.currency,
-             "included_in_total": self.included_in_total}
+        d = {
+            "code": self.code,
+            "description": self.description,
+            "amount": str(q2(self.amount)),
+            "amount_exact": dstr(self.amount),
+            "currency": self.currency,
+            "included_in_total": self.included_in_total,
+        }
         if self.basis_kg is not None:
             d["basis_kg"] = dstr(self.basis_kg)
         if self.rate is not None:
@@ -85,7 +93,7 @@ class PricedOption:
     origin: str
     destination: str
     source: Source
-    total: Decimal | None               # all-in EUR incl. pickup, quantized to cents (None if incomplete)
+    total: Decimal | None  # all-in EUR incl. pickup, quantized to cents (None if incomplete)
     currency: str = "EUR"
     charges: list[PricedCharge] = field(default_factory=list)
     chargeable_weight_kg: Decimal | None = None
@@ -97,15 +105,15 @@ class PricedOption:
     source_links: list[str] = field(default_factory=list)
     evidence: dict[str, Any] = field(default_factory=dict)
     carrier_code: str | None = None
-    source_total: Decimal | None = None   # carrier price in its own currency, before pickup
+    source_total: Decimal | None = None  # carrier price in its own currency, before pickup
     source_currency: str | None = None
     fx_eur_per_unit: Decimal | None = None
-    air_total: Decimal | None = None      # air leg only (freight+fuel+security) in EUR, quantized
+    air_total: Decimal | None = None  # air leg only (freight+fuel+security) in EUR, quantized
     pivoted: bool = False
     break_kg: int | None = None
     complete: bool = True
     missing: list[str] = field(default_factory=list)
-    tags: list[str] = field(default_factory=list)   # cheapest / fastest after ranking
+    tags: list[str] = field(default_factory=list)  # cheapest / fastest after ranking
 
     @property
     def lane(self) -> tuple[str, str]:
@@ -129,14 +137,18 @@ class PricedOption:
 
     def to_dict(self, now: dt.datetime | None = None) -> dict:
         d = {
-            "carrier": self.carrier, "carrier_code": self.carrier_code,
+            "carrier": self.carrier,
+            "carrier_code": self.carrier_code,
             "lane": {"origin": self.origin, "destination": self.destination},
-            "source": self.source, "service": self.service,
-            "total": str(self.total) if self.total is not None else None, "currency": self.currency,
+            "source": self.source,
+            "service": self.service,
+            "total": str(self.total) if self.total is not None else None,
+            "currency": self.currency,
             "charges": [c.to_dict() for c in self.charges],
             "chargeable_weight_kg": dstr(self.chargeable_weight_kg),
             "billed_weight_kg": dstr(self.billed_weight_kg),
-            "break_kg": self.break_kg, "pivoted": self.pivoted,
+            "break_kg": self.break_kg,
+            "pivoted": self.pivoted,
             "rate_id": self.rate_id,
             "valid_until": self.valid_until.isoformat() if self.valid_until else None,
             "dataset_version": self.dataset_version,
@@ -144,8 +156,10 @@ class PricedOption:
             "source_total": str(self.source_total) if self.source_total is not None else None,
             "source_currency": self.source_currency,
             "fx_eur_per_unit": dstr(self.fx_eur_per_unit),
-            "complete": self.complete, "missing": list(self.missing),
-            "source_links": list(self.source_links), "evidence": _jsonable(self.evidence),
+            "complete": self.complete,
+            "missing": list(self.missing),
+            "source_links": list(self.source_links),
+            "evidence": _jsonable(self.evidence),
         }
         if now is not None:
             d["bookable"] = self.bookable(now)
