@@ -1,7 +1,14 @@
+# secrets
 .env
+.env.*
+!.env.example
+# local runtime state
+var/
 .venv
+backend/.venv/
 __pycache__/
 *.py[cod]
+*.pyc
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
@@ -10,10 +17,9 @@ htmlcov/
 node_modules/
 dist/
 frontend/openapi.json
-*.egg-info/
-.DS_Store
-backend/.venv/
 frontend/.vite/
+*.egg-info/
 *.log
+.DS_Store
 .idea/
 .vscode/
