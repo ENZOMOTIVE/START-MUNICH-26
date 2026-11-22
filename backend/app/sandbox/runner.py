@@ -30,7 +30,7 @@ from app.core.config import get_settings
 from app.core.errors import DomainError
 from app.crm.queries import pause_session, resume_session
 from app.db import repositories
-from app.db.models import ActionIntentRow, JobRow, MessageRow, RateCandidateRow
+from app.db.models import ActionIntentRow, BookingRow, JobRow, MessageRow, RateCandidateRow
 from app.db.session import get_session_factory
 from app.platform.mailbox import (
     CURSOR_NAME,
@@ -112,8 +112,25 @@ def _drive(world: World, factory, until_s: int | None = None) -> dict:
                     ActionIntentRow.payload["thread_id"].astext.in_(roots),
                 )
             ).first()
+            # A portal booking whose answer was lost waits for its scheduled retry
+            # (booking._submit); time has to move on until that retry has been made.
+            retrying = db.scalars(
+                select(BookingRow.id).where(
+                    BookingRow.status == "UNKNOWN",
+                    BookingRow.booking_reference.is_(None),
+                    BookingRow.rate_id.is_not(None),
+                )
+            ).first()
         # Keep simulated time moving until every send of this run has a recorded outcome.
-        busy = world.queue or state["todo"] or state["waiting"] or actions or sending or waiting
+        busy = (
+            world.queue
+            or state["todo"]
+            or state["waiting"]
+            or actions
+            or sending
+            or waiting
+            or retrying
+        )
         if not busy:
             break
         stops = [actions[0]["at"]] if actions else []
