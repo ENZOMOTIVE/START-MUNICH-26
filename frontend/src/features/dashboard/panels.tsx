@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type { RunStatus, UsageRow } from "../../api/client";
-import { BarList, Donut, Gauge, Histogram, Meter, Sparkline, StageFunnel } from "../../components/charts";
+import { BarList, Donut, Gauge, Histogram, Meter, Sparkline, StackedBars, StageFunnel } from "../../components/charts";
 import { COST_ZERO_USD, RESPONSE_FULL_MS, RESPONSE_ZERO_MS, duration, humanize, usd } from "../../lib/format";
 import type { SessionSummary } from "../../types/session";
 import {
+  activity,
   countBy,
   isLive,
   median,
@@ -16,6 +17,8 @@ import {
   type LooseDetail,
   type ResponseSample,
 } from "./metrics";
+import type { FeedEvent } from "./useLiveFeed";
+import { OUR_TEAM, ROWS, SNAPSHOT, perAccepted, rate, standing } from "./leaderboard";
 import type { Optional } from "./useDashboardData";
 
 /* ---------- small pieces ---------- */
@@ -476,3 +479,150 @@ export function RunPanel({ run, error }: { run: Optional<RunStatus> | null; erro
   );
 }
 
+
+/* ---------- activity over time ---------- */
+
+export function ActivityPanel({ list }: { list: SessionSummary[] }) {
+  const { buckets, stepMinutes } = activity(list);
+  const showDay = buckets.length > 0 && (buckets[buckets.length - 1]!.start - buckets[0]!.start) / 3_600_000 > 20;
+  const fmt = (start: number) => {
+    const d = new Date(start);
+    const t = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    return showDay ? `${d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })} ${t}` : t;
+  };
+  return (
+    <Panel
+      id="db-activity"
+      title="RFQs over time"
+      sub={
+        stepMinutes
+          ? `Received per ${stepMinutes < 60 ? `${stepMinutes} min` : `${stepMinutes / 60} h`}, split by where each one stands now. All ${list.length} sessions.`
+          : "Received per interval, split by where each one stands now."
+      }
+      className="db-span-8"
+    >
+      {buckets.length ? (
+        <StackedBars
+          label="RFQs received over time, by outcome"
+          height={260}
+          buckets={buckets.map((b) => ({ label: fmt(b.start), values: b.values }))}
+          series={[
+            { key: "booked", label: "Booked", color: "var(--series-1)" },
+            { key: "quoted", label: "Quoted or accepted", color: "var(--series-2)" },
+            { key: "progress", label: "In progress", color: "var(--series-3)" },
+            { key: "attention", label: "Needs attention", color: "var(--negative)" },
+          ]}
+        />
+      ) : (
+        <div className="empty">No RFQs yet.</div>
+      )}
+    </Panel>
+  );
+}
+
+/* ---------- board standings (snapshot) ---------- */
+
+export function StandingsPanel() {
+  const me = standing();
+  if (!me) return null;
+  const byPoints = [...ROWS].filter((r) => r.points > 0).sort((a, b) => b.points - a.points);
+  const byQuality = [...ROWS].filter((r) => r.accepted > 0).sort((a, b) => perAccepted(b) - perAccepted(a));
+  const colour = (team: string) => (team === OUR_TEAM ? "var(--series-2)" : "var(--tint-active)");
+  const n = (v: number, d = 0) => v.toLocaleString("en-GB", { maximumFractionDigits: d, minimumFractionDigits: d });
+  return (
+    <Panel
+      id="db-standings"
+      title="Where we stand on the board"
+      sub={`Snapshot of the board at ${SNAPSHOT.updatedAt}, ${SNAPSHOT.roundsSent} rounds sent, ${SNAPSHOT.teams} teams. Copied by hand, so it does not refresh.`}
+      className="db-span-12"
+    >
+      <div className="db-stats">
+        <Stat label="Rank by points" value={`${me.rank} of ${me.teams}`} hint={`${n(me.row.points, 1)} points`} />
+        <Stat
+          label="Points per accepted email"
+          value={n(me.perAccepted, 1)}
+          hint={`rank ${me.perAcceptedRank} of ${byQuality.length}`}
+        />
+        <Stat
+          label="Accepted of answered"
+          value={`${Math.round(rate(me.row) * 100)}%`}
+          hint={`${me.row.accepted} of ${me.row.answered}`}
+        />
+        <Stat
+          label="Rounds without an answer"
+          value={String(me.roundsMissed)}
+          hint={`of ${SNAPSHOT.roundsSent} sent`}
+        />
+        <Stat label="Bookings" value={String(me.row.bookings)} />
+      </div>
+      <div className="db-standings">
+        <div>
+          <h3 className="db-sub-title">Total points</h3>
+          <BarList
+            label="Total points by team"
+            items={byPoints.map((r) => ({
+              label: r.team,
+              value: r.points,
+              hint: r.team === OUR_TEAM ? "us" : undefined,
+              color: colour(r.team),
+            }))}
+            formatValue={(v) => n(v)}
+          />
+        </div>
+        <div>
+          <h3 className="db-sub-title">Points per accepted email</h3>
+          <BarList
+            label="Points per accepted email by team"
+            items={byQuality.map((r) => ({
+              label: r.team,
+              value: perAccepted(r),
+              hint: r.team === OUR_TEAM ? "us" : undefined,
+              color: colour(r.team),
+            }))}
+            formatValue={(v) => n(v, 1)}
+          />
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+/* ---------- live activity feed ---------- */
+
+export function LiveFeedPanel({ events, total, now }: { events: FeedEvent[]; total: number; now: number }) {
+  const ago = (at: number) => {
+    const s = Math.max(0, Math.round((now - at) / 1000));
+    return s < 60 ? `${s}s ago` : `${Math.floor(s / 60)}m ago`;
+  };
+  return (
+    <Panel
+      id="db-feed"
+      title="Live activity"
+      sub="What changed since you opened this page, checked every 2 seconds."
+      className="db-span-4"
+      aside={
+        <span className="chip chip-dark">
+          <span className="dot dot-live" aria-hidden="true" />
+          <strong className="num">{total}</strong> changes
+        </span>
+      }
+    >
+      {events.length ? (
+        <ul className="db-feed" aria-live="polite">
+          {events.map((e) => (
+            <li key={e.key} className={`db-feed-item db-feed-${e.kind}`}>
+              <span className="db-feed-dot" aria-hidden="true" />
+              <span className="db-feed-main">
+                <strong>{e.lane}</strong>
+                <span>{e.text}</span>
+              </span>
+              <span className="subtle num">{ago(e.at)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="empty">Waiting for the next RFQ. New requests and stage changes appear here as they happen.</div>
+      )}
+    </Panel>
+  );
+}

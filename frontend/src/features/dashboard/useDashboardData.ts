@@ -105,7 +105,7 @@ function useDetails(list: SessionSummary[] | null) {
 }
 
 export function useDashboardData() {
-  const sessions = usePolling(listSessions, 5000);
+  const sessions = usePolling(listSessions, 2000);
   const meta = usePolling(getMeta, 30_000);
   const usage = usePolling(fetchUsage, 30_000);
   const run = usePolling(fetchRun, 10_000);
