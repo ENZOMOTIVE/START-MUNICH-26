@@ -1,31 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { clock, money } from "../../lib/format";
-import { useCountUp } from "../../lib/useCountUp";
 import { useNow } from "../../lib/usePolling";
 import "./dashboard.css";
 import { isLive, kpis, needsPerson, responseTimes } from "./metrics";
 import {
-  ActivityPanel,
   AtRiskPanel,
   CostPanel,
   LanesPanel,
-  LiveFeedPanel,
   MixPanel,
   PipelinePanel,
   ResponsePanel,
   RunPanel,
-  StandingsPanel,
 } from "./panels";
 import { DETAIL_WINDOW, useDashboardData } from "./useDashboardData";
-import { useLiveFeed } from "./useLiveFeed";
 
 /** Overview: what's live, what's at risk, how we score. Real API data only. */
 export function DashboardPage() {
   const { sessions, meta, usage, run, details } = useDashboardData();
   const now = useNow(1000);
   const list = sessions.data;
-  const feed = useLiveFeed(list);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   useEffect(() => {
     if (list) setUpdatedAt(Date.now());
@@ -56,11 +50,7 @@ export function DashboardPage() {
       ) : null}
 
       <section className="db-kpis" aria-label="Key figures">
-        <Kpi
-          label="RFQs received"
-          value={k?.received}
-          hint={k && k.received >= 150 ? "latest 150 shown" : undefined}
-        />
+        <Kpi label="RFQs received" value={k?.received} />
         <Kpi label="Quoted" value={k?.quoted} hint="reached quoted or beyond" />
         <Kpi label="Booked" value={k?.booked} />
         <Kpi
@@ -92,9 +82,6 @@ export function DashboardPage() {
 
       {list ? (
         <div className="db-grid">
-          <ActivityPanel list={list} />
-          <LiveFeedPanel events={feed.events} total={feed.total} now={now} />
-          <StandingsPanel />
           <PipelinePanel list={list} />
           <AtRiskPanel list={list} now={now} />
           <ResponsePanel
@@ -158,7 +145,7 @@ function Hero({
             <strong className="num">{attention ?? "–"}</strong> need a person
           </span>
           {updatedAt ? (
-            <span className="subtle db-hero-updated" key={updatedAt}>
+            <span className="subtle db-hero-updated">
               {stale ? "Connection lost, showing data from " : "Updated "}
               {clock(new Date(updatedAt).toISOString())}
             </span>
@@ -195,8 +182,6 @@ function Kpi({
   wide?: boolean;
   to?: string;
 }) {
-  const shown = useCountUp(typeof value === "number" ? value : undefined);
-  const display = typeof value === "number" && shown !== undefined ? Math.round(shown) : value;
   const cls = `db-kpi ${accent ? "db-kpi-accent" : ""} ${tone === "warn" ? "db-kpi-warn" : ""} ${wide ? "db-kpi-wide" : ""}`;
   const inner = (
     <>
@@ -204,7 +189,7 @@ function Kpi({
       {value === undefined ? (
         <span className="skeleton db-kpi-skel" aria-hidden="true" />
       ) : (
-        <strong className="db-kpi-value num">{display}</strong>
+        <strong className="db-kpi-value num">{value}</strong>
       )}
       {hint ? <span className="db-kpi-hint">{hint}</span> : null}
     </>

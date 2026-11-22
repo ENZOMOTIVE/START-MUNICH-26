@@ -9,6 +9,5 @@ export { Gauge, type GaugeBand, type GaugeProps } from "./Gauge";
 export { Histogram, type HistogramBand, type HistogramMarker, type HistogramProps } from "./Histogram";
 export { Meter, type MeterProps } from "./Meter";
 export { Sparkline, type SparklineProps } from "./Sparkline";
-export { StackedBars, type StackedBarsProps, type StackedBucket, type StackedSeries } from "./StackedBars";
 export { StageFunnel, type FunnelStage, type StageFunnelProps } from "./StageFunnel";
 export { SERIES, defaultFormat, seriesColor, useWidth } from "./shared";

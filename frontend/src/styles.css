@@ -356,6 +356,35 @@ textarea {
   }
 }
 
+/* ---------- mode ribbon ---------- */
+
+.mode-ribbon {
+  background: var(--forest);
+  color: var(--lime);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.mode-ribbon-inner {
+  width: min(var(--content), calc(100% - 2 * var(--gutter)));
+  margin: 0 auto;
+  min-height: 36px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+}
+
+.mode-ribbon a {
+  color: inherit;
+}
+
+@media (prefers-color-scheme: dark) {
+  .mode-ribbon {
+    background: #223d0d;
+  }
+}
+
 /* ---------- primitives ---------- */
 
 .btn {

@@ -1,4 +1,5 @@
 import { Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { DemoBanner } from "./components/DemoBanner";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { ReviewPage } from "./features/review/ReviewPage";
 import { SandboxConsole } from "./features/sandbox/SandboxConsole";
@@ -18,6 +19,7 @@ export default function App() {
       <a className="skip" href="#main">
         Skip to content
       </a>
+      <DemoBanner />
       <header className="topbar">
         <div className="topbar-inner">
           <NavLink to="/" className="brand" aria-label="Air desk, overview">
