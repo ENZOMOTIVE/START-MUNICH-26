@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     app_mode: Literal["demo", "live", "sandbox", "observe"] = "demo"
     live_actions_enabled: bool = False
     llm_mode: Literal["fake", "gateway"] = "fake"
+    # Customer mail tone: "warm" adds the closing lines of app/workflows/data/reply_voice.md
+    # to English mails. "plain" sends them exactly as replies.py builds them.
+    reply_voice: Literal["plain", "warm"] = "plain"
     simulation_seed: int = 42
     database_url: str = "postgresql+psycopg://fiveu:fiveu@127.0.0.1:5433/fiveu"
     api_host: str = "127.0.0.1"

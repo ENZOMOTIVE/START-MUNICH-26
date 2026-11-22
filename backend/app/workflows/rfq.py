@@ -29,7 +29,7 @@ from app.platform.routing import RATE_DESK_ADDRESS
 from app.pricing.pickup import PickupQuote, airport_for_zone
 from app.pricing.quote_models import Evidence
 from app.pricing.tariffs import load_fixture_candidates
-from app.workflows import documents, language, replies
+from app.workflows import documents, language, replies, voice
 from app.workflows.extract import (
     REQUIRED,
     airlines_for,
@@ -255,6 +255,8 @@ def outbound(
         if source is not None:
             spoken = _customer_language(root) if customer else language.detect(source.body)
             mail = {**mail, "body": language.localize(mail["body"], spoken)}
+            # Optional warmer voice (REPLY_VOICE=warm, English only, adds lines, never removes).
+            mail = {**mail, "body": voice.apply(mail["body"], mail["purpose"], spoken)}
         if pdf:
             document = documents.text_pdf(mail["body"])
             # Before it goes out: the PDF must read back with every number the mail states.
