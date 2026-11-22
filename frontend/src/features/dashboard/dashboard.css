@@ -239,6 +239,10 @@
   grid-column: span 4;
 }
 
+.db-span-12 {
+  grid-column: 1 / -1;
+}
+
 .db-span-5 {
   grid-column: span 5;
 }
@@ -493,4 +497,94 @@
 .db-meters {
   display: grid;
   gap: 14px;
+}
+
+.db-standings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 40px;
+}
+
+@media (max-width: 860px) {
+  .db-standings {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* live feed */
+
+.db-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  max-height: 320px;
+  overflow: hidden;
+}
+
+.db-feed-item {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-size: 0.88rem;
+  animation: db-feed-in 0.5s ease both;
+}
+
+.db-feed-item:first-child {
+  background: var(--tint-hover, rgba(159, 232, 112, 0.18));
+}
+
+.db-feed-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.db-feed-main span {
+  color: var(--fg-3);
+  font-size: 0.8rem;
+}
+
+.db-feed-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--series-3);
+}
+
+.db-feed-new .db-feed-dot {
+  background: var(--series-2);
+}
+
+.db-feed-attention .db-feed-dot {
+  background: var(--negative);
+}
+
+@keyframes db-feed-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+.db-hero-updated {
+  animation: db-tick 0.9s ease;
+}
+
+@keyframes db-tick {
+  from {
+    color: var(--fg);
+    transform: translateX(-3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .db-feed-item,
+  .db-hero-updated {
+    animation: none;
+  }
 }

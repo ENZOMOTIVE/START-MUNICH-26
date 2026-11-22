@@ -137,3 +137,39 @@ export function usageTotals(rows: UsageRow[]) {
     models: [...models.entries()].sort((a, b) => b[1] - a[1]).map(([label, value]) => ({ label, value })),
   };
 }
+
+/** The list has no received timestamp; the deadline is received + 6 minutes. */
+const WINDOW_MS = 6 * 60_000;
+const BUCKET_STEPS_MIN = [1, 2, 5, 10, 15, 30, 60, 120, 360, 720, 1440];
+
+export const OUTCOMES = ["booked", "quoted", "progress", "attention"] as const;
+export type Outcome = (typeof OUTCOMES)[number];
+
+/** One outcome per session: a person is needed, booked, quoted or accepted, or still in progress. */
+export function outcomeOf(s: SessionSummary): Outcome {
+  if (needsPerson(s)) return "attention";
+  if (s.stage === "booked") return "booked";
+  if (stageIndex(s.stage) >= 2) return "quoted";
+  return "progress";
+}
+
+/** RFQs per time interval, split by outcome. Interval size is chosen to give ~20 columns. */
+export function activity(list: SessionSummary[]) {
+  const times = list
+    .map((s) => ({ at: Date.parse(s.deadline) - WINDOW_MS, outcome: outcomeOf(s) }))
+    .filter((t) => Number.isFinite(t.at));
+  if (times.length === 0) return { buckets: [], stepMinutes: 0 };
+  const min = Math.min(...times.map((t) => t.at));
+  const max = Math.max(...times.map((t) => t.at));
+  const span = Math.max(1, max - min);
+  const stepMinutes = BUCKET_STEPS_MIN.find((m) => span / (m * 60_000) <= 20) ?? 1440;
+  const step = stepMinutes * 60_000;
+  const first = Math.floor(min / step) * step;
+  const count = Math.floor((max - first) / step) + 1;
+  const buckets = Array.from({ length: count }, (_, i) => ({
+    start: first + i * step,
+    values: { booked: 0, quoted: 0, progress: 0, attention: 0 } as Record<Outcome, number>,
+  }));
+  for (const t of times) buckets[Math.floor((t.at - first) / step)]!.values[t.outcome] += 1;
+  return { buckets, stepMinutes };
+}
