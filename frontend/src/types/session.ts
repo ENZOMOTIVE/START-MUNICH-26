@@ -23,12 +23,22 @@ export type RfqPayload = {
   destination: string;
   weight?: string;
   weight_kg?: string;
+  volume_m3?: string | null;
+  pickup_required?: boolean;
+  pickup_zone?: string | null;
+  service_intent?: "cheapest" | "fastest" | string | null;
+  received_at?: string;
+  expires_at?: string;
+  thread_id?: string;
+  status?: string;
 };
 
 export type QuotePayload = {
   total: string;
   currency: string;
   carrier?: string;
+  decided_at?: string;
+  evidence?: Record<string, unknown>;
 };
 
 export type BookingPayload = {
@@ -59,6 +69,8 @@ export type SelectedOffer = {
 
 export type SessionSummary = {
   id: string;
+  origin?: string | null;
+  destination?: string | null;
   stage: SessionStage | string;
   deadline: string;
   paused: boolean;

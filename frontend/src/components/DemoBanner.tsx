@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { getMeta } from "../api/client";
 
 export function DemoBanner() {
@@ -6,43 +7,32 @@ export function DemoBanner() {
 
   useEffect(() => {
     let cancelled = false;
-
-    const load = async () => {
-      try {
-        const meta = await getMeta();
-        if (!cancelled) {
-          setMode(meta.app_mode);
-        }
-      } catch {
-        if (!cancelled) {
-          setMode("");
-        }
-      }
-    };
-
-    void load(); // the mode cannot change while the page is open: ask once
-
+    // The mode cannot change while the page is open: ask once.
+    getMeta()
+      .then((meta) => !cancelled && setMode(meta.app_mode))
+      .catch(() => !cancelled && setMode(""));
     return () => {
       cancelled = true;
     };
   }, []);
 
-  if (mode === "sandbox") {
-    return (
-      <div className="demo-ribbon sandbox-ribbon" role="status">
-        <span>Sandbox · simulated data · no live actions</span>
-        <a href="/sandbox">Sandbox console</a>
-        <a href="/">Sessions board</a>
-      </div>
-    );
-  }
-  if (mode !== "demo") {
+  if (mode !== "demo" && mode !== "sandbox") {
     return null;
   }
 
   return (
-    <div className="demo-ribbon" role="status">
-      <span>Demo mode · simulated outcomes only</span>
+    <div className="mode-ribbon" role="status">
+      <div className="mode-ribbon-inner">
+        <span className="dot" aria-hidden="true" />
+        {mode === "sandbox" ? (
+          <>
+            <span>Sandbox · simulated data · no live actions</span>
+            <Link to="/sandbox">Open sandbox console</Link>
+          </>
+        ) : (
+          <span>Demo mode · simulated outcomes only · nothing is sent</span>
+        )}
+      </div>
     </div>
   );
 }
