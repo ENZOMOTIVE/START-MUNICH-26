@@ -340,8 +340,9 @@ def assess_dg(mails: list[tuple[str, list[dict]]]) -> dict:
     unreadable: list[str] = []
     rejected: list[dict] = []
     declared_by_document: list[str] = []
+    wrong_goods: list[int] = []  # files refused as papers for other goods (by position)
     evidence = [item for _, attachments in mails for item in attachments or []]
-    for item in evidence:
+    for position, item in enumerate(evidence):
         name, named = str(item.get("filename") or ""), item.get("un_numbers") or []
         kinds = item.get("kinds") or []
         if not item.get("readable"):
@@ -355,6 +356,7 @@ def assess_dg(mails: list[tuple[str, list[dict]]]) -> dict:
         elif request_un and named and not set(request_un) & set(named):
             reason = f"it is for {', '.join(named)}, your request names {', '.join(request_un)}"
             rejected.append({"filename": name, "problem": "other_goods", "reason": reason})
+            wrong_goods.append(position)
         elif item.get("says_not_regulated") and "dgd" not in kinds:
             reason = "it says the goods are not regulated for transport"
             rejected.append({"filename": name, "problem": "contradicts_email", "reason": reason})
@@ -366,7 +368,11 @@ def assess_dg(mails: list[tuple[str, list[dict]]]) -> dict:
     signals += [un for un in declared_by_document if un not in signals]
     # So is a UN number in any other attached file: live packing lists name one under a mail
     # that calls the cargo "general, non-dangerous", and a quote without the papers is refused.
-    for item in evidence:
+    # A file already refused as the papers of other goods is a wrong attachment, not more cargo:
+    # counting its UN number would ask for those papers forever (sandbox dg_wrong_documents).
+    for position, item in enumerate(evidence):
+        if position in wrong_goods:
+            continue
         if item.get("readable") and not item.get("says_not_regulated"):
             signals += [un for un in item.get("un_numbers") or [] if un not in signals]
     named = documents.un_numbers(" ".join(signals))
