@@ -1,0 +1,395 @@
+/* Shared chart styles. Class prefix: .ch- */
+
+.ch {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.ch svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.ch-axis-text {
+  fill: var(--fg-3);
+  font-size: 11px;
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
+}
+
+.ch-strong-text {
+  fill: var(--fg);
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font);
+}
+
+.ch-grid {
+  stroke: var(--grid);
+  stroke-width: 1;
+}
+
+.ch-legend {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  font-size: 0.88rem;
+}
+
+.ch-legend li {
+  display: grid;
+  grid-template-columns: 12px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ch-legend-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+
+.ch-legend-value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ch-legend-share {
+  color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
+  min-width: 3.5ch;
+  text-align: right;
+}
+
+.ch-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+/* donut */
+
+.ch-donut {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) 1fr;
+  align-items: center;
+  gap: 24px;
+}
+
+.ch-donut-ring {
+  position: relative;
+}
+
+.ch-donut-center {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.ch-donut-center strong {
+  font-size: clamp(1.4rem, 4vw, 2rem);
+  font-weight: 900;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.ch-donut-center span {
+  color: var(--fg-3);
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.ch-donut .ch-legend {
+  margin: 0;
+}
+
+.ch-seg {
+  transition:
+    stroke-dasharray 0.9s var(--ease),
+    stroke-dashoffset 0.9s var(--ease),
+    opacity 0.15s;
+}
+
+.ch-seg:hover {
+  opacity: 0.8;
+}
+
+@media (max-width: 420px) {
+  .ch-donut {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .ch-donut-ring {
+    width: 160px;
+  }
+
+  .ch-donut .ch-legend {
+    width: 100%;
+  }
+}
+
+/* bar list */
+
+.ch-barlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.ch-barlist-row {
+  display: grid;
+  gap: 6px;
+}
+
+.ch-barlist-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 0.92rem;
+  min-width: 0;
+}
+
+.ch-barlist-label {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+a.ch-barlist-label:hover {
+  text-decoration: underline;
+}
+
+.ch-barlist-hint {
+  color: var(--fg-3);
+  font-weight: 500;
+  margin-left: 6px;
+}
+
+.ch-barlist-value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ch-track {
+  height: 10px;
+  border-radius: var(--r-full);
+  background: var(--tint);
+  overflow: hidden;
+}
+
+.ch-fill {
+  height: 100%;
+  border-radius: var(--r-full);
+  transform-origin: left center;
+  transition: width 0.8s var(--ease);
+}
+
+/* funnel */
+
+.ch-funnel {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.ch-funnel-row {
+  display: grid;
+  grid-template-columns: minmax(78px, 110px) 1fr minmax(64px, auto);
+  align-items: center;
+  gap: 14px;
+}
+
+.ch-funnel-label {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.ch-funnel-bar {
+  height: 36px;
+  border-radius: 10px;
+  background: var(--tint);
+  overflow: hidden;
+  position: relative;
+}
+
+.ch-funnel-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 10px;
+  transition: width 0.8s var(--ease);
+}
+
+.ch-funnel-count {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ch-funnel-count strong {
+  display: block;
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+
+.ch-funnel-count span {
+  font-size: 0.75rem;
+  color: var(--fg-3);
+}
+
+/* histogram */
+
+.ch-bar {
+  transition: opacity 0.15s;
+}
+
+.ch-bar-hit {
+  fill: transparent;
+  cursor: default;
+}
+
+.ch-bar-group:hover .ch-bar {
+  opacity: 0.75;
+}
+
+.ch-tooltip {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 10px));
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--fg);
+  color: var(--bg);
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--shadow);
+}
+
+/* meter */
+
+.ch-meter {
+  display: grid;
+  gap: 6px;
+}
+
+.ch-meter-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.88rem;
+}
+
+.ch-meter-top span:first-child {
+  color: var(--fg-2);
+}
+
+.ch-meter-top span:last-child {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* gauge */
+
+.ch-gauge {
+  max-width: 320px;
+  margin: 0 auto;
+}
+
+.ch-gauge-arc {
+  transition: stroke-dasharray 1s var(--ease);
+}
+
+.ch-gauge-readout {
+  text-align: center;
+  margin-top: -36px;
+}
+
+.ch-gauge-readout strong {
+  display: block;
+  font-size: clamp(1.8rem, 5vw, 2.4rem);
+  font-weight: 900;
+  letter-spacing: -0.045em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.ch-gauge-readout span {
+  display: block;
+  margin-top: 4px;
+  color: var(--fg-3);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+/* gentle entrance, only when motion is welcome */
+
+@media (prefers-reduced-motion: no-preference) {
+  .ch-grow-y {
+    transform-box: fill-box;
+    transform-origin: 50% 100%;
+    animation: ch-grow-y 0.7s var(--ease) both;
+  }
+
+  .ch-grow-x {
+    animation: ch-grow-x 0.8s var(--ease) both;
+  }
+
+  .ch-draw {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    animation: ch-draw 1.1s var(--ease) forwards;
+  }
+
+  .ch-fade {
+    animation: ch-fade 0.8s var(--ease) both;
+  }
+}
+
+@keyframes ch-grow-y {
+  from {
+    transform: scaleY(0);
+  }
+}
+
+@keyframes ch-grow-x {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+@keyframes ch-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes ch-fade {
+  from {
+    opacity: 0;
+  }
+}

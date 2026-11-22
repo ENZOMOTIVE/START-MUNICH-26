@@ -175,3 +175,110 @@ export async function runDemo(): Promise<{ id: string }> {
   }
   return { id };
 }
+
+// ---- dashboard + live data (existing backend endpoints, unchanged) ----
+
+export type UsageRow = {
+  model: string;
+  cost_kind: string;
+  simulated: boolean;
+  calls: number;
+  observed_cost: string | null;
+  estimated_cost: string | null;
+};
+
+/** Model gateway calls grouped by model and cost kind. */
+export function getUsage(): Promise<UsageRow[]> {
+  return request("/api/usage");
+}
+
+export type RunStatus = {
+  enabled: boolean;
+  started_ms: number | null;
+  stopped_ms: number | null;
+  minutes: number;
+  admitted_threads: string[];
+  used: Record<string, number>;
+  limits: Record<string, number>;
+};
+
+/** Counters and limits of the bounded live run. */
+export function getRunStatus(): Promise<RunStatus> {
+  return request("/api/run");
+}
+
+export function stopRun(): Promise<RunStatus> {
+  return request("/api/run/stop", { method: "POST" });
+}
+
+export function admitSession(id: string): Promise<SessionDetail> {
+  return request(`/api/sessions/${id}/admit`, { method: "POST" });
+}
+
+/**
+ * Server-sent events for one session's timeline. Calls `onEvent` once per event, in order.
+ * The server names each SSE message after the event type, so this reads the stream itself
+ * instead of EventSource (which would need one listener per type). On a drop it reconnects
+ * with `after=<last id>`, so no event is delivered twice. Returns a function that stops it.
+ */
+export function streamSessionEvents(
+  id: string,
+  onEvent: (event: SessionEvent) => void,
+  onStatus?: (status: "open" | "reconnecting" | "unavailable") => void,
+): () => void {
+  const controller = new AbortController();
+  let lastId = 0;
+
+  const run = async () => {
+    while (!controller.signal.aborted) {
+      try {
+        const res = await fetch(`${API_URL}/api/sessions/${id}/stream?after=${lastId}`, {
+          headers: { Accept: "text/event-stream" },
+          signal: controller.signal,
+        });
+        if (res.status >= 400 && res.status < 500) {
+          // 404: this backend build has no stream (or no such session). Retrying won't help.
+          onStatus?.("unavailable");
+          return;
+        }
+        if (!res.ok || !res.body) {
+          throw new Error(`stream ${res.status}`);
+        }
+        onStatus?.("open");
+        const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+        let buffer = "";
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += value;
+          let cut = buffer.indexOf("\n\n");
+          while (cut >= 0) {
+            const block = buffer.slice(0, cut);
+            buffer = buffer.slice(cut + 2);
+            cut = buffer.indexOf("\n\n");
+            let eventId: number | null = null;
+            const data: string[] = [];
+            for (const line of block.split("\n")) {
+              if (line.startsWith("id:")) eventId = Number(line.slice(3).trim());
+              else if (line.startsWith("data:")) data.push(line.slice(5).trim());
+            }
+            if (!data.length) continue; // keep-alive comment
+            if (eventId !== null && Number.isFinite(eventId)) lastId = eventId;
+            try {
+              onEvent(JSON.parse(data.join("\n")) as SessionEvent);
+            } catch {
+              // a malformed message is skipped, the stream goes on
+            }
+          }
+        }
+      } catch {
+        if (controller.signal.aborted) return;
+      }
+      onStatus?.("reconnecting");
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  };
+
+  void run();
+  return () => controller.abort();
+}
