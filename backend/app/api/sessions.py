@@ -15,11 +15,20 @@ from app.core.errors import DomainError, NotFoundError
 from app.crm import queries
 from app.crm.queries import SessionDetail, SessionListItem
 from app.db import repositories
-from app.db.models import ActionIntentRow, GatewayUsageRow, MessageRow, RfqRow, SessionRow
+from app.db.models import (
+    ActionIntentRow,
+    GatewayUsageRow,
+    JobRow,
+    MessageRow,
+    RfqRow,
+    SessionRow,
+)
 from app.db.session import get_db, get_session_factory
 from app.platform import get_adapters, runlimits
 from app.platform.outbox import deliver_intent
+from app.platform.routing import sender_info
 from app.workflows import followup
+from app.workflows.rfq import HELD_FOR_RELEASE
 
 router = APIRouter()
 
@@ -122,6 +131,89 @@ def run_stop(db: Session = Depends(get_db)):
     """Stop every outbound action of this run. Pending work is kept, nothing is deleted."""
     runlimits.stop(db)
     return runlimits.status(db)
+
+
+@router.post("/api/run/resume", dependencies=[Depends(operator)])
+def run_resume(db: Session = Depends(get_db)):
+    """Lift the stop. Held work continues; counters and the admitted list are unchanged."""
+    runlimits.resume(db)
+    return runlimits.status(db)
+
+
+@router.get("/api/trace")
+def trace(limit: int = Query(default=50, ge=1, le=500), db: Session = Depends(get_db)):
+    """One entry per customer request, newest first: ingestion, routing, pricing, outbox and
+    acknowledgment. `state` tells a held request from a lost, failed or expired one."""
+    roots = db.scalars(
+        select(MessageRow)
+        .where(MessageRow.thread_id == MessageRow.external_id)
+        .order_by(MessageRow.received_at.desc())
+        .limit(limit * 4)
+    ).all()
+    entries = []
+    for mail in [m for m in roots if sender_info(m.sender)["kind"] == "customer"][:limit]:
+        job = db.scalars(
+            select(JobRow)
+            .where(JobRow.payload["message_id"].astext == str(mail.id))
+            .order_by(JobRow.created_at.desc())
+        ).first()
+        rfq = repositories.rfq_by_message(db, mail.id)
+        session = repositories.session_by_rfq(db, rfq.id) if rfq is not None else None
+        intents = (
+            db.scalars(
+                select(ActionIntentRow)
+                .where(ActionIntentRow.rfq_id == rfq.id)
+                .order_by(ActionIntentRow.created_at)
+            ).all()
+            if rfq is not None
+            else []
+        )
+        quote = next((i for i in intents if i.kind == "first_quote"), None)
+        if session is None:
+            waiting = job is not None and job.status in {"pending", "claimed"}
+            state = "queued" if waiting else "lost"
+        elif rfq.status in {"quoted", "accepted", "booked", "expired", "failed"}:
+            state = rfq.status
+        elif session.paused:
+            state = "held"  # waits for a person: admission, a review or a take-over
+        else:
+            state = "in_progress"
+        entries.append(
+            {
+                "mail_id": mail.external_id,
+                "sender": mail.sender,
+                "received_at": mail.received_at.isoformat(),
+                "state": state,
+                "kind": mail.classification,
+                "routing": None
+                if job is None
+                else {"job": job.status, "attempts": job.attempts, "error": job.last_error},
+                "session": None
+                if session is None
+                else {
+                    "id": str(session.id),
+                    "stage": session.stage,
+                    "paused": session.paused,
+                    "waits_for_admission": session.exception == HELD_FOR_RELEASE,
+                    "exception": session.exception,
+                    "deadline": rfq.expires_at.isoformat(),
+                },
+                "outbox": [
+                    {
+                        "kind": i.kind,
+                        "purpose": (i.payload or {}).get("purpose"),
+                        "delivery_status": i.delivery_status,
+                        "sent_mail_id": ((i.payload or {}).get("_send") or {}).get("id"),
+                    }
+                    for i in intents
+                ],
+                # The mailbox's own id of our stored quote is the only proof that it left.
+                "acknowledged_quote_id": ((quote.payload or {}).get("_send") or {}).get("id")
+                if quote is not None and quote.delivery_status == "confirmed"
+                else None,
+            }
+        )
+    return entries
 
 
 class DraftEdit(BaseModel):

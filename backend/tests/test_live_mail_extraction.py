@@ -118,7 +118,8 @@ def test_lots_are_added_up_to_one_consignment():
     plain = extract(
         "",
         "Cheapest option from MUC to CAI.\n"
-        "Lot 1: 9 pieces, 345 kg gross, 0.58 cbm\nLot 2: 1 piece, gross weight 141 kg, volume 2.04 cbm",
+        "Lot 1: 9 pieces, 345 kg gross, 0.58 cbm\n"
+        "Lot 2: 1 piece, gross weight 141 kg, volume 2.04 cbm",
     )["fields"]
     assert (plain["weight_kg"], plain["volume_m3"]) == ("486", "2.620")
 

@@ -1,6 +1,9 @@
 {
-  "required_documents": ["dgd", "msds"],
+  "required_documents": [
+    "dgd",
+    "msds"
+  ],
   "by_un_number": {},
   "confirmed": false,
-  "source": "Team assumption. Neither docs/tasks/T1-T5 nor the published 5U API description says which documents a dangerous-goods request needs. Ask the organisers, then set confirmed to true and name their answer here."
+  "source": "Asking before quoting is confirmed by the live customers on 2026-11-21 (mails 2518, 2647, 16839): they refused quotes sent \"without asking us for the dangerous goods documents\", also when only the attached packing list named a UN number. Which documents count is still the team's assumption (declaration and safety data sheet): no organiser source names them, so confirmed stays false."
 }

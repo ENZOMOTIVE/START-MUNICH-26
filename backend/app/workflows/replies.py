@@ -92,6 +92,7 @@ def final_quote(
     charge_codes: list[str],
     valid_until: datetime | None,
     pickup_zone=None,
+    pickup_reference=None,
 ) -> dict:
     included = [c.replace("_", " ") for c in charge_codes]
     transit = "transit time not confirmed"
@@ -101,7 +102,8 @@ def final_quote(
     if included:
         lines.append(f"Included: {_join(included)}")
     if pickup_zone:
-        lines.append(f"Pickup: from zone {pickup_zone}")
+        offer = f" (trucker offer {pickup_reference})" if pickup_reference else ""
+        lines.append(f"Pickup: from zone {pickup_zone}{offer}")
     if valid_until is not None:
         lines.append(f"Valid until: {_when(valid_until)}")
     return _mail(
@@ -272,7 +274,14 @@ def booking_confirmed(
 
 
 def tracking_answer(
-    name, subject, booking_reference, booking_status, carrier, update: dict | None
+    name,
+    subject,
+    booking_reference,
+    booking_status,
+    carrier,
+    update: dict | None,
+    shipment: str | None = None,
+    ready: str | None = None,
 ) -> dict:
     if booking_status != "confirmed":
         return _mail(
@@ -288,9 +297,15 @@ def tracking_answer(
             "tracking_answer",
             subject,
             name,
-            f"Your booking {booking_reference} with {carrier} is confirmed.",
-            "I have not received a tracking update for it yet, so I cannot tell you where the "
-            "shipment is right now. I will pass on updates as soon as they arrive.",
+            f"Your shipment of {shipment} is booked and confirmed with {carrier}, booking "
+            f"reference {booking_reference}."
+            if shipment
+            else f"Your booking {booking_reference} with {carrier} is confirmed.",
+            f"It is ready on {ready}, so it has not been collected or flown yet."
+            if ready
+            else "I have not received a tracking update for it yet, so it has not been reported "
+            "as collected or departed.",
+            "I will pass on the next update as soon as I receive it.",
         )
     return _mail(
         "tracking_answer",

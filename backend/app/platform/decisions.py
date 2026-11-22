@@ -55,6 +55,7 @@ _NEGATED_ACCEPT = re.compile(
 )
 _DECLINE = re.compile(
     r"\b(decline|declined|reject|rejected|too expensive|no longer need|not interested|"
+    r"not go ahead|not going ahead|not be going ahead|not proceed|"
     r"found another|went with another|we will pass|we'll pass|cancel|above our budget|"
     r"zu teuer|kein interesse|lehnen .{0,40}ab|absagen|"
     r"trop cher|nous refusons|pas intéressés?|"
@@ -115,7 +116,8 @@ def reply_text(body: str) -> str:
 
 
 def keyword_verdict(subject: str, body: str) -> str:
-    text = reply_text(body) or (subject or "")
+    # Live mail writes "won’t": with the typographic apostrophe a refusal read as "go ahead".
+    text = (reply_text(body) or (subject or "")).replace("’", "'").replace("‘", "'")
     if _NEGATED_ACCEPT.search(text) or _DECLINE.search(text):
         return DECLINE
     tentative = bool(_TENTATIVE.search(text))

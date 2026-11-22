@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import String, and_, case, cast, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,7 @@ from app.db.models import (
 )
 
 JOB_LEASE = timedelta(seconds=60)
+ANSWER_WINDOW = timedelta(minutes=6)  # how long a customer request can still be answered
 
 
 def get_or_create_message(db: Session, values: dict) -> tuple[MessageRow, bool]:
